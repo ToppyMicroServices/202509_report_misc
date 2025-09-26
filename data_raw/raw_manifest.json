@@ -1,0 +1,9 @@
+{
+  "generated_at": "2025-09-23T10:32:13.445188Z",
+  "count": 3,
+  "files": [
+    "data_raw/MORTGAGE30US.csv",
+    "data_raw/CET1_RWA_US_WB.csv",
+    "data_raw/CET1_RWA_JP_WB.csv"
+  ]
+}
