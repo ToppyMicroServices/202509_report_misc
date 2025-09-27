@@ -1,9 +1,11 @@
 {
-  "generated_at": "2025-09-23T10:32:13.445188Z",
-  "count": 3,
+  "generated_at": "2025-09-27T09:20:55.032834Z",
+  "count": 5,
   "files": [
     "data_raw/MORTGAGE30US.csv",
     "data_raw/CET1_RWA_US_WB.csv",
-    "data_raw/CET1_RWA_JP_WB.csv"
+    "data_raw/CET1_RWA_JP_WB.csv",
+    "data_raw/RREACBM027SBOG.csv",
+    "data_raw/AGSEBMPTCMAHDFS.csv"
   ]
 }
