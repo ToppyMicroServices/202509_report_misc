@@ -1,1 +1,25 @@
+## OS / editor noise
+.DS_Store
+.vscode/
+
+## Python cache / env
+__pycache__/
+.pytest_cache/
+.venv/
+
+## Large transient datasets (do not commit)
+downloads/HMDA_*.csv
 data_raw/HMDA_*.csv
+
+## Generated figures and artifacts (regenerable)
+figures/
+fig_code16/
+figures_bk/
+
+## Logs, archives, and scratch
+*.log
+release_*.zip
+tmp/
+
+## Misc
+fredgraph.csv*
