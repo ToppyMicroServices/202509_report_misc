@@ -1,0 +1,43 @@
+{
+  "title": "US–JP Credit Externalization Study: Code, Processed Data, and Figures (2025Q3)",
+  "upload_type": "software",
+  "description": "Reproducible code and selected processed datasets for the US–Japan credit externalization analysis. Includes figure generation scripts (fig_codeNN), processing pipelines (proc_codeNN), and documentation. See README for data provenance and reproducibility notes.",
+  "notes": "If the associated paper DOI becomes available, add it under related_identifiers with relation 'isSupplementTo'.",
+  "creators": [
+    {
+      "name": "Your, Name",
+      "affiliation": "Your Affiliation",
+      "orcid": "0000-0000-0000-0000"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "Additional, Contributor",
+      "type": "Other"
+    }
+  ],
+  "license": "other-open",
+  "access_right": "open",
+  "keywords": [
+    "credit creation",
+    "securitization",
+    "MBS",
+    "DSR",
+    "Japan",
+    "United States",
+    "BIS",
+    "FRED"
+  ],
+  "communities": [
+    { "identifier": "openscience" }
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/ToppyMicroServices/202509_report_misc",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    }
+  ],
+  "version": "v2025.09",
+  "language": "eng"
+}

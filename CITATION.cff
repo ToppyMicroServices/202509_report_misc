@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: "US–JP Credit Externalization Study: Code, Processed Data, and Figures"
+message: "If you use this software or its figures/data products, please cite it as below."
+authors:
+  - family-names: Your
+    given-names: Name
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+version: "v2025.09"
+date-released: "2025-09-28"
+repository-code: "https://github.com/ToppyMicroServices/202509_report_misc"
+license: "Other-Open"
+keywords:
+  - credit creation
+  - securitization
+  - MBS
+  - DSR
+  - Japan
+  - United States
+  - BIS
+  - FRED

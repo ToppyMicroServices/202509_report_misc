@@ -64,7 +64,7 @@ python code/proc_code03_build_dsr_creditgrowth_panels.py
 |---|--------|-------------|
 | 01 | fig_code01_jsda_components.py | JSDA semiannual RMBS components |
 | 02 | fig_code02_mbs_to_gdp.py | US vs JP MBS/RMBS to GDP (single axis) |
-| 03 | fig_code03_mbs_to_gdp_dual_axis.py | Dual-axis comparison |
+| 03 | fig_code03_mbs_to_gdp_dual_axis.py | Deprecated — use fig_code02_mbs_to_gdp.py |
 | 04 | fig_code04_phi_offbalance.py | Detailed φ off-balance analysis |
 | 05 | fig_code05_phi_offbalance_simple.py | Simplified φ comparison (US auto-detect guidance) |
 | 06 | fig_code06_scatter_dsr_creditgrowth.py | DSR vs Credit Growth scatter + OLS |
@@ -220,5 +220,24 @@ Important: the household share is conceptually “off‑balance portion / total 
 ### 17.7 New figure (code16)
 `fig_code16_fred.py` also produces “US: φ vs Fed MBS / Total credit (two‑axis)” under `fig_code16/us_phi_vs_fedmbs_totalcredit.png`.
 Left axis is US φ; right axis is Fed MBS / total private credit. The script auto‑detects US φ from processed files (`proc_code04_US_phi_series_*.csv`) or accepts a simple `data_processed/us_phi.csv` with columns `[date, phi_us]`.
+
+
+## 18. Zenodo linking (DOI)
+
+This repository is prepared for Zenodo archiving to mint a DOI.
+
+- Metadata files included:
+	- `.zenodo.json` (title, creators, keywords, related identifiers)
+	- `CITATION.cff` (citation metadata for GitHub UI and tools)
+
+Steps to enable DOI (once the paper is ready or for a software-only DOI):
+1. Sign in to Zenodo and connect your GitHub account (https://zenodo.org/account/settings/github/).
+2. Toggle archiving for this repository: `ToppyMicroServices/202509_report_misc`.
+3. Create a GitHub Release (e.g., `v2025.09`). Zenodo will archive that release and mint a DOI.
+4. Copy the DOI badge from Zenodo and paste it at the top of this README.
+
+Notes:
+- If/when the paper DOI is available, add it into `.zenodo.json` under `related_identifiers` with relation `isSupplementTo` (or `isPartOf`/`isDocumentedBy` as appropriate).
+- Avoid including huge raw datasets in the archived artifact; this repo already ignores large HMDA CSVs. Releases should contain code and small, deterministic processed data.
 
 

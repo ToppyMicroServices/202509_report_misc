@@ -38,8 +38,9 @@ if run python "$CODE_DIR/fig_code01_jsda_components.py"; then mark_ok fig_code01
 ########## fig_code02 ##########
 if run python "$CODE_DIR/fig_code02_mbs_to_gdp.py"; then mark_ok fig_code02; else mark_err fig_code02 run_failed; fi
 
-########## fig_code03 ##########
-if run python "$CODE_DIR/fig_code03_mbs_to_gdp_dual_axis.py"; then mark_ok fig_code03; else mark_err fig_code03 run_failed; fi
+########## fig_code03 (deprecated) ##########
+log WARN "fig_code03 is deprecated; using fig_code02 instead."
+mark_skip fig_code03 "deprecated (use fig_code02_mbs_to_gdp.py)"
 
 ########## build annual MBS/RMBS ratios (proc_code05) ##########
 if run python "$CODE_DIR/proc_code05_build_annual_mbs_rmbs_ratios.py"; then
@@ -67,6 +68,13 @@ PHI_Q_CSV="$PROC_DIR/proc_code02_JP_phi_quarterly.csv"
 if ! exists "$PHI_Q_CSV" && exists "$PROC_DIR/JP_phi_quarterly.csv"; then
   PHI_Q_CSV="$PROC_DIR/JP_phi_quarterly.csv"  # legacy fallback
   log WARN "Using legacy JP_phi_quarterly.csv (deprecated; prefer proc_code02_JP_phi_quarterly.csv; removal target 2025Q4)"
+fi
+# Ensure US observed pre/post inputs exist (prefer canonical builder, fallback remains inside fig_code04)
+US_PRE="$PROC_DIR/proc_code04_US_phi_series_observed_pre.csv"
+US_POST="$PROC_DIR/proc_code04_US_phi_series_observed_post.csv"
+if ! exists "$US_PRE" || ! exists "$US_POST"; then
+  log INFO "US observed pre/post not found; running proc_code04_build_us_phi_series_observed.py"
+  if run python "$CODE_DIR/proc_code04_build_us_phi_series_observed.py"; then :; else log WARN "proc_code04_build_us_phi_series_observed failed; fig_code04 will rely on internal fallbacks"; fi
 fi
 if exists "$PHI_Q_CSV"; then
   # fig_code04 (minimal) uses --jp / --us ; provide explicit JP path

@@ -45,14 +45,47 @@ def build_us():
             dcol = dfp.columns[0]
             dfp[dcol] = pd.to_datetime(dfp[dcol], errors='coerce')
             dfp = dfp.dropna(subset=[dcol]).set_index(dcol).sort_index()
-            # Accept either existing ratio col or reconstruct if components present
+            # If components exist, recompute ratio robustly (fix unit mislabel where GDP is in millions)
+            cols_lower = {c.lower(): c for c in dfp.columns}
+            mbs_col = None
+            gdp_col = None
+            for c in dfp.columns:
+                cl = c.lower()
+                if mbs_col is None and ('mbs' in cl) and ('bn' in cl or '$bn' in cl):
+                    mbs_col = c
+                if gdp_col is None and (('ngdp' in cl) or ('gdp' in cl)) and ('bn' in cl or '$bn' in cl):
+                    gdp_col = c
+            if mbs_col is not None and gdp_col is not None:
+                s_mbs = pd.to_numeric(dfp[mbs_col], errors='coerce')
+                s_gdp = pd.to_numeric(dfp[gdp_col], errors='coerce')
+                # Detect mis-labeled units: if GDP looks like millions (>> typical bn), divide by 1000
+                try:
+                    med = float(s_gdp.dropna().median())
+                except Exception:
+                    med = None
+                if med is not None and med > 100000:  # millions value mistakenly stored under $Bn label
+                    s_gdp = s_gdp / 1000.0
+                dfu = pd.DataFrame({
+                    'US_MBS_$bn': s_mbs,
+                    'US_NGDP_$bn': s_gdp,
+                    'US_MBS_to_NGDP_%': 100.0 * s_mbs / s_gdp
+                }).dropna(subset=['US_MBS_to_NGDP_%'])
+                US_SOURCE_PROC05 = True
+                return dfu, None
+            # Else, accept an existing ratio column if present (as percentage); scale if clearly in fraction
             ratio_col = None
             for c in dfp.columns:
                 if 'to' in c.lower() and 'gdp' in c.lower():
                     ratio_col = c; break
             if ratio_col:
+                sr = pd.to_numeric(dfp[ratio_col], errors='coerce')
+                # If median is implausibly small (<1.0), assume it's in fraction and convert to %
+                med = float(sr.dropna().median()) if sr.dropna().size else None
+                if med is not None and med < 1.0:
+                    sr = sr * 100.0
+                dfu = pd.DataFrame({'US_MBS_to_NGDP_%': sr}).dropna()
                 US_SOURCE_PROC05 = True
-                return dfp.rename(columns={ratio_col:'US_MBS_to_NGDP_%'}), None
+                return dfu, None
         except Exception:
             pass  # fall back to raw build
     mbs_files = find(["AGSEBMPTCMAHDFS.csv"])
@@ -64,7 +97,10 @@ def build_us():
     mbs[col_m] = mbs[col_m] / 1_000.0
     gdp = read_fred_two_col(gdp_files[0])
     col_g = gdp.columns[0]
-    gdp_a = to_annual_from_quarterly_sum(gdp, col_g).rename(columns={col_g:"US_NGDP_$bn"})
+    # NGDPSAXDCUSQ is in millions of USD (quarterly). Sum to annual then convert to billions for consistency.
+    gdp_a = to_annual_from_quarterly_sum(gdp, col_g)
+    gdp_a[col_g] = gdp_a[col_g] / 1_000.0
+    gdp_a = gdp_a.rename(columns={col_g:"US_NGDP_$bn"})
     mbs_a = to_annual_from_q4(mbs, col_m).rename(columns={col_m:"US_MBS_$bn"})
     df = mbs_a.join(gdp_a, how="inner")
     if df.empty: return None, "no US overlap"
@@ -212,20 +248,27 @@ def make():
     if df.empty:
         print("[MBS->GDP] skip: no overlap 2012-2021"); return
     fig, ax1 = plt.subplots(figsize=(7,4))
-    us_label = "US MBS/GDP (%)" + (" (proc_code05)" if US_SOURCE_PROC05 else "")
+    us_label = "US MBS/GDP "
     ax1.plot(df.index.year, df["US_MBS_to_NGDP_%"], marker="o", lw=2.0, label=us_label, color="#E69F00")
-    ax1.set_ylabel("US: % of GDP")
+    ax1.set_ylabel("US MBS/GDP [%]")
+    # Format left axis numbers without unit, one decimal place (e.g., 11.0)
+    from matplotlib.ticker import FormatStrFormatter
+    ax1.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
     ax2 = ax1.twinx()
-    jp_label = "Japan RMBS/GDP (%)" + (" (proc_code05)" if JP_SOURCE_PROC05 else "")
+    jp_label = "JP RMBS/GDP"
     ax2.plot(df.index.year, df["JP_RMBS_to_NGDP_%"], marker="s", lw=2.0, label=jp_label, color="#56B4E9")
-    ax2.set_ylabel("JP: % of GDP")
+    ax2.set_ylabel("JP RMBS/GDP [%]")
+    # Format right axis numbers without unit, one decimal place
+    from matplotlib.ticker import FormatStrFormatter
+    ax2.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
     ax1.set_title("MBS-to-GDP (US) vs RMBS-to-GDP (JP), annual")
     ax1.grid(True, alpha=0.3)
     lines = ax1.get_lines()+ax2.get_lines()
     labels = [l.get_label() for l in lines]
     ax1.legend(lines, labels, loc="best")
     target = figure_name_with_code(__file__, OUTDIR/"JP_US_MBS_to_AnnualGDP_2012_2021_DUAL_AXIS.png")
-    unique = ensure_unique(target)
+    #unique = ensure_unique(target)
+    unique = target
     safe_savefig(fig, unique)
     print("WROTE:", unique)
 
