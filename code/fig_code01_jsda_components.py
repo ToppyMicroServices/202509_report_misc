@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from util_code01_lib_io import find, safe_savefig, ensure_unique, figure_name_with_code
+from util_code01_lib_io import find, safe_savefig, figure_name_with_code
 
 OUTDIR = Path("figures")
 
@@ -48,10 +48,9 @@ def make():
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best")
     target = figure_name_with_code(__file__, OUTDIR/"JP_RMBS_components_semiannual_JSDA_2012_2025_FINAL.png")
-    unique = ensure_unique(target)
-    safe_savefig(fig, unique)
+    saved_path = safe_savefig(fig, target, overwrite=True)
     print("[JSDA comps] read:", chosen)
-    print("WROTE:", unique)
+    print("WROTE:", saved_path)
 
 if __name__=="__main__":
     make()

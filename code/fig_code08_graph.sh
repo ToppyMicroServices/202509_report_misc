@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # fig_code08_graph.sh
 # Master orchestrator: generate ALL figure outputs (fig_code01–13) with sensible defaults.
-# Safe to re-run; individual Python scripts already avoid overwriting (ensure_unique / figure_name_with_code).
+# Safe to re-run; individual Python scripts now overwrite outputs deterministically via figure_name_with_code.
 
 set -euo pipefail
 
@@ -11,10 +11,26 @@ FIG_DIR="$ROOT_DIR/figures"
 PROC_DIR="$ROOT_DIR/data_processed"
 RAW_DIR="$ROOT_DIR/data_raw"
 
+# Select Python interpreter (prefer project venv).
+if [[ -z "${PYTHON_BIN:-}" ]]; then
+  if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+    PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+  elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+  else
+    printf "[FIG08][ERR ] Could not locate a Python interpreter (.venv/bin/python, python3, or python).\n" >&2
+    exit 1
+  fi
+fi
+
 mkdir -p "$FIG_DIR"
 
 log(){ printf "\n[FIG08][%s] %s\n" "$1" "$2"; }
 run(){ log RUN "$*"; if ! "$@"; then log FAIL "$*"; return 1; fi; }
+
+log INFO "Using Python interpreter: $PYTHON_BIN"
 
 SUMMARY_OK=()
 SUMMARY_SKIP=()
@@ -33,31 +49,31 @@ mark_err(){ SUMMARY_ERR+=("$1: $2"); echo "$1" >>"$EXEC_LOG"; }
 exists(){ [[ -f "$1" ]]; }
 
 ########## fig_code01 ##########
-if run python "$CODE_DIR/fig_code01_jsda_components.py"; then mark_ok fig_code01; else mark_err fig_code01 run_failed; fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code01_jsda_components.py"; then mark_ok fig_code01; else mark_err fig_code01 run_failed; fi
 
 ########## fig_code02 ##########
-if run python "$CODE_DIR/fig_code02_mbs_to_gdp.py"; then mark_ok fig_code02; else mark_err fig_code02 run_failed; fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code02_mbs_to_gdp.py"; then mark_ok fig_code02; else mark_err fig_code02 run_failed; fi
 
 ########## fig_code03 (deprecated) ##########
 log WARN "fig_code03 is deprecated; using fig_code02 instead."
 mark_skip fig_code03 "deprecated (use fig_code02_mbs_to_gdp.py)"
 
 ########## build annual MBS/RMBS ratios (proc_code05) ##########
-if run python "$CODE_DIR/proc_code05_build_annual_mbs_rmbs_ratios.py"; then
+if run "$PYTHON_BIN" "$CODE_DIR/proc_code05_build_annual_mbs_rmbs_ratios.py"; then
   :
 else
   log WARN "proc_code05_build_annual_mbs_rmbs_ratios failed (legacy annual ratio CSVs may remain)"
 fi
 
 ########## build JP JHF RMBS vs GDP (proc_code06) ##########
-if run python "$CODE_DIR/proc_code06_build_jp_jhf_rmbs_vs_gdp.py"; then
+if run "$PYTHON_BIN" "$CODE_DIR/proc_code06_build_jp_jhf_rmbs_vs_gdp.py"; then
   :
 else
   log WARN "proc_code06_build_jp_jhf_rmbs_vs_gdp failed (fig_code09 may fallback)"
 fi
 
 ########## build phi quarterly (proc_code02) ##########
-if run python "$CODE_DIR/proc_code02_build_phi_quarterly.py"; then
+if run "$PYTHON_BIN" "$CODE_DIR/proc_code02_build_phi_quarterly.py"; then
   :
 else
   log WARN "proc_code02_build_phi_quarterly failed"
@@ -74,11 +90,11 @@ US_PRE="$PROC_DIR/proc_code04_US_phi_series_observed_pre.csv"
 US_POST="$PROC_DIR/proc_code04_US_phi_series_observed_post.csv"
 if ! exists "$US_PRE" || ! exists "$US_POST"; then
   log INFO "US observed pre/post not found; running proc_code04_build_us_phi_series_observed.py"
-  if run python "$CODE_DIR/proc_code04_build_us_phi_series_observed.py"; then :; else log WARN "proc_code04_build_us_phi_series_observed failed; fig_code04 will rely on internal fallbacks"; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/proc_code04_build_us_phi_series_observed.py"; then :; else log WARN "proc_code04_build_us_phi_series_observed failed; fig_code04 will rely on internal fallbacks"; fi
 fi
 if exists "$PHI_Q_CSV"; then
   # fig_code04 (minimal) uses --jp / --us ; provide explicit JP path
-  if run python "$CODE_DIR/fig_code04_phi_offbalance.py" --jp "$PHI_Q_CSV"; then mark_ok fig_code04; else mark_err fig_code04 run_failed; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/fig_code04_phi_offbalance.py" --jp "$PHI_Q_CSV"; then mark_ok fig_code04; else mark_err fig_code04 run_failed; fi
 else
   mark_skip fig_code04 "missing proc_code02_JP_phi_quarterly.csv (and legacy JP_phi_quarterly.csv)"
 fi
@@ -86,7 +102,7 @@ fi
 ########## fig_code05 (needs CSV + out) ##########
 # Auto-detect a multi-country phi CSV (>=2 phi columns). Fallback to JP_phi_quarterly.
 detect_phi_csv(){
-  python - <<'PY'
+  "$PYTHON_BIN" - <<'PY'
 import os, pandas as pd, json
 base='data_processed'
 best=None
@@ -113,20 +129,29 @@ if [[ -n "$PHI_CSV" ]]; then
   esac
 fi
 if [[ -n "$PHI_CSV" ]]; then
-  if run python "$CODE_DIR/fig_code05_phi_offbalance_simple.py" --csv "$PHI_CSV" --out "$FIG_DIR/JP_US_phi_simple.png"; then mark_ok fig_code05; else mark_err fig_code05 run_failed; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/fig_code05_phi_offbalance_simple.py" --csv "$PHI_CSV" --out "$FIG_DIR/JP_US_phi_simple.png"; then mark_ok fig_code05; else mark_err fig_code05 run_failed; fi
 else
   mark_skip fig_code05 "no phi csv detected"
 fi
 
 ########## fig_code06 ##########
 ## Build DSR panels (proc_code03) to ensure prefixed panel CSVs exist
-if run python "$CODE_DIR/proc_code03_build_dsr_creditgrowth_panels.py"; then
+if run "$PYTHON_BIN" "$CODE_DIR/proc_code03_build_dsr_creditgrowth_panels.py"; then
   :
 else
   log WARN "proc_code03_build_dsr_creditgrowth_panels failed (will rely on legacy panels if present)"
 fi
-# Prefer prefixed US panel when present; fig_code06 auto-fallback remains inside.
-if run python "$CODE_DIR/fig_code06_scatter_dsr_creditgrowth.py" --panel-csv "$PROC_DIR/proc_code03_US_DSR_CreditGrowth_panel.csv" --panel; then mark_ok fig_code06; else mark_err fig_code06 run_failed; fi
+# Prefer prefixed US panel when present; fall back to legacy name if needed.
+US_PANEL="$PROC_DIR/proc_code03_US_DSR_CreditGrowth_panel.csv"
+if [[ ! -f "$US_PANEL" && -f "$PROC_DIR/US_DSR_CreditGrowth_panel.csv" ]]; then
+  log WARN "Using legacy US_DSR_CreditGrowth_panel.csv (prefixed panel missing)."
+  US_PANEL="$PROC_DIR/US_DSR_CreditGrowth_panel.csv"
+fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code06_scatter_dsr_creditgrowth.py" --panel "$US_PANEL"; then
+  mark_ok fig_code06
+else
+  mark_err fig_code06 run_failed
+fi
 
 ########## fig_code07 (needs k_decomposition CSV) ##########
 K_CSV_PREF="$PROC_DIR/proc_code01_k_decomposition_JP_quarterly.csv"
@@ -136,8 +161,8 @@ if ! exists "$K_CSV_PREF" && exists "$K_CSV_LEG"; then
   cp "$K_CSV_LEG" "$K_CSV_PREF" || true
 fi
 if exists "$K_CSV_PREF"; then
-  if run python "$CODE_DIR/proc_code01_trim_k_decomp.py" --csv "$K_CSV_PREF" --eps 0; then :; else log WARN "k_decomposition trim step failed (continuing)"; fi
-  if run python "$CODE_DIR/fig_code07_k_decomp_generic.py" \
+  if run "$PYTHON_BIN" "$CODE_DIR/proc_code01_trim_k_decomp.py" --csv "$K_CSV_PREF" --eps 0; then :; else log WARN "k_decomposition trim step failed (continuing)"; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/fig_code07_k_decomp_generic.py" \
       --csv "$K_CSV_PREF" \
       --out "$FIG_DIR/K_DECOMP_JP_generic.png" \
       --end-year 2025 --end-quarter 2 --debug-save-trimmed-csv; then
@@ -157,21 +182,21 @@ mark_ok fig_code08
 JHF_PROC06="$PROC_DIR/proc_code06_JP_JHF_RMBS_vs_GDP_quarterly.csv"
 LEGACY_JHF="$PROC_DIR/JP_JHF_RMBS_vs_GDP.csv"
 if exists "$JHF_PROC06"; then
-  if run python "$CODE_DIR/fig_code09_jp_jhf_rmbs_vs_gdp.py"; then mark_ok fig_code09; else mark_err fig_code09 run_failed; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/fig_code09_jp_jhf_rmbs_vs_gdp.py"; then mark_ok fig_code09; else mark_err fig_code09 run_failed; fi
 elif exists "$LEGACY_JHF" && exists "$RAW_DIR/JPNNGDP.csv"; then
-  if run python "$CODE_DIR/fig_code09_jp_jhf_rmbs_vs_gdp.py"; then mark_ok fig_code09; else mark_err fig_code09 run_failed; fi
+  if run "$PYTHON_BIN" "$CODE_DIR/fig_code09_jp_jhf_rmbs_vs_gdp.py"; then mark_ok fig_code09; else mark_err fig_code09 run_failed; fi
 else
   mark_skip fig_code09 "missing proc_code06_JP_JHF_RMBS_vs_GDP_quarterly.csv (or legacy + JPNNGDP.csv)"
 fi
 
 ########## fig_code10 ##########
 # Build US phi prefixed processed (bank_off) before verification figure
-if run python "$CODE_DIR/proc_code04_build_us_phi_series.py"; then :; else log WARN "proc_code04_build_us_phi_series failed"; fi
+if run "$PYTHON_BIN" "$CODE_DIR/proc_code04_build_us_phi_series.py"; then :; else log WARN "proc_code04_build_us_phi_series failed"; fi
 # Pre-check presence of required raw series for fig_code10 to give clearer UX
 if [[ ! -f "$RAW_DIR/AGSEBMPTCMAHDFS.csv" || ! -f "$RAW_DIR/HHMSDODNS.csv" ]]; then
   log WARN "fig_code10 prerequisites missing (need data_raw/AGSEBMPTCMAHDFS.csv and HHMSDODNS.csv); will skip gracefully."
 fi
-if OUTPUT=$(python "$CODE_DIR/fig_code10_verify_us_phi_sources.py" --no-download 2>&1); then
+if OUTPUT=$("$PYTHON_BIN" "$CODE_DIR/fig_code10_verify_us_phi_sources.py" --no-download 2>&1); then
   if grep -q "\[SKIP\]" <<<"$OUTPUT"; then
     mark_skip fig_code10 'no local series (skip)'
     printf "[FIG08][INFO] fig_code10 skipped (no local data)\n"
@@ -196,14 +221,14 @@ US_PANEL="$PROC_DIR/proc_code03_US_DSR_CreditGrowth_panel.csv"
 JP_PANEL="$PROC_DIR/proc_code03_JP_DSR_CreditGrowth_panel.csv"
 if [[ ! -f "$US_PANEL" && -f "$PROC_DIR/US_DSR_CreditGrowth_panel.csv" ]]; then US_PANEL="$PROC_DIR/US_DSR_CreditGrowth_panel.csv"; fi
 if [[ ! -f "$JP_PANEL" && -f "$PROC_DIR/JP_DSR_CreditGrowth_panel.csv" ]]; then JP_PANEL="$PROC_DIR/JP_DSR_CreditGrowth_panel.csv"; fi
-if run python "$CODE_DIR/fig_code12_dsr_creditgrowth_us_jp_dualpanels.py" --us-csv "$US_PANEL" --jp-csv "$JP_PANEL"; then mark_ok fig_code12; else mark_err fig_code12 run_failed; fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code12_dsr_creditgrowth_us_jp_dualpanels.py" --us-csv "$US_PANEL" --jp-csv "$JP_PANEL"; then mark_ok fig_code12; else mark_err fig_code12 run_failed; fi
 
 ########## fig_code13 (supply a dummy arg to suppress auto show) ##########
-if run python "$CODE_DIR/fig_code13_dsr_creditgrowth_us_jp_timeseries.py" --us-csv "$US_PANEL" --jp-csv "$JP_PANEL" --start 1990; then mark_ok fig_code13; else mark_err fig_code13 run_failed; fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code13_dsr_creditgrowth_us_jp_timeseries.py" --us-csv "$US_PANEL" --jp-csv "$JP_PANEL" --start 1990; then mark_ok fig_code13; else mark_err fig_code13 run_failed; fi
 
 ########## fig_code16 ##########
 # Requires either FRED_API_KEY for online fetch or local raw CSVs under data_raw/ for WALCL/WSHOMCB and BIS series.
-if run python "$CODE_DIR/fig_code16_fred.py"; then mark_ok fig_code16; else mark_err fig_code16 run_failed; fi
+if run "$PYTHON_BIN" "$CODE_DIR/fig_code16_fred.py"; then mark_ok fig_code16; else mark_err fig_code16 run_failed; fi
 
 echo "\n================ FIGURE GENERATION SUMMARY ================"
 printf "OK   : %s\n" "${SUMMARY_OK[*]:-}" || true
@@ -214,14 +239,14 @@ if [ ${#SUMMARY_ERR[@]:-0} -gt 0 ] 2>/dev/null; then
   printf "ERRORS:\n"; for s in "${SUMMARY_ERR[@]}"; do echo "  - $s"; done
   exit 1
 fi
-echo "\n[CHECK] Verifying fig_code prefix on generated PNG/CSV outputs..."
+echo "\n[CHECK] Verifying fig_code prefix on generated PNG/CSV outputs (including subfolders)..."
 prefix_issues=0
 while IFS= read -r f; do
   base="$(basename "$f")"
   # Allow a legacy diagnostic file (kept temporarily) without prefix to avoid noisy warning
   if [[ "$base" == JP_US_phi_offbalance_quarterly_* ]]; then continue; fi
-  [[ "$base" =~ ^fig_code[0-9]+_ ]] || { echo "  [WARN] missing prefix: $base"; prefix_issues=$((prefix_issues+1)); }
-done < <(find "$FIG_DIR" -maxdepth 1 -type f \( -name '*.png' -o -name '*.csv' \) -mtime -1)
+  [[ "$base" =~ ^fig_code[0-9]+_ ]] || { echo "  [WARN] missing prefix: $base (path: ${f#$FIG_DIR/})"; prefix_issues=$((prefix_issues+1)); }
+done < <(find "$FIG_DIR" -type f \( -name '*.png' -o -name '*.csv' \) -mtime -1)
 if (( prefix_issues > 0 )); then
   echo "[CHECK] Prefix issues detected: $prefix_issues (see warnings above)"; else echo "[CHECK] All recent files have expected prefix."; fi
 

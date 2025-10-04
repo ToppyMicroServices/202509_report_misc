@@ -1,156 +1,250 @@
-"""fig_code13_dsr_creditgrowth_us_jp_timeseries
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
-Purpose:
-    Two-panel time series comparison of Household Debt Service Ratio (DSR, %) and
-    Credit growth (pp YoY) for United States (top) and Japan (bottom). Both
-    series are plotted on a unified y-scale (Percent / pp) to maximize visual
-    comparability across countries. No regression annotation; this is a pure
-    time-series "line view" counterpart to the scatter style figures.
-
-Default inputs (quarter-end index, required columns: DSR_pct, CreditGrowth_ppYoY):
-    data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv
-    data_processed/proc_code03_JP_DSR_CreditGrowth_panel.csv
-Legacy fallback auto-detected if prefixed missing:
-    data_processed/US_DSR_CreditGrowth_panel.csv
-    data_processed/JP_DSR_CreditGrowth_panel.csv
-
-Features:
-    - Unified y-axis range across both panels (5% padding beyond global min/max)
-    - Optional year filters (--start, --end)
-    - Optional moving average smoothing (--ma WINDOW)
-    - Latest point numeric annotation (can disable with --no-latest)
-    - Uses figure_name_with_code + safe_savefig for provenance & no overwrite
-
-Example:
-    python code/fig_code13_dsr_creditgrowth_us_jp_timeseries.py \\
-        --start 2000 --end 2024 \\
-        --out figures/DSR_CreditGrowth_TimeSeries_US_JP.png
 """
-from __future__ import annotations
+fig_code13_dsr_creditgrowth_us_jp_timeseries.py
+
+Two-panel time-series comparison of DSR and Credit Growth (ΔYoY, pp)
+for the United States and Japan.
+
+Publication-quality defaults:
+  • Country color consistency: both DSR and Credit Growth share the same hue per country
+      - United States: darkgoldenrod
+      - Japan: dodgerblue
+  • Line style encodes variable:
+      - DSR: solid, thicker
+      - Credit Growth: dashed + triangle markers, thinner
+  • Shared legend on top
+  • markevery=4 (downsampled markers)
+  • PDF/EPS/PNG output (+ optional TIFF)
+  • --mono flag for grayscale preview
+"""
+
 import argparse
+import sys
+import warnings
 from pathlib import Path
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
-import sys
-from util_code01_lib_io import safe_savefig, ensure_unique, figure_name_with_code
-from util_code02_colors import COLOR_US, COLOR_JP, COLOR_NEUTRAL
+import matplotlib.ticker as mticker
 
-PREF_US = Path('data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv')
-PREF_JP = Path('data_processed/proc_code03_JP_DSR_CreditGrowth_panel.csv')
-LEG_US = Path('data_processed/US_DSR_CreditGrowth_panel.csv')
-LEG_JP = Path('data_processed/JP_DSR_CreditGrowth_panel.csv')
-DEFAULT_US = PREF_US if PREF_US.exists() else (LEG_US if LEG_US.exists() else PREF_US)
-DEFAULT_JP = PREF_JP if PREF_JP.exists() else (LEG_JP if LEG_JP.exists() else PREF_JP)
-DEFAULT_OUT = Path('figures/DSR_CreditGrowth_TimeSeries_US_JP.png')
+# ---------------------------------------------------------------------
+# Layout constants
+# ---------------------------------------------------------------------
+FRL_SINGLE_COL_INCH = 3.30
+PANEL_HEIGHT_INCH = 1.90
+TOP_BOTTOM_PAD = 0.25
+DPI_DEFAULT = 300
+FONT_FAMILY_PREF = ["Arial", "Helvetica", "DejaVu Sans"]
 
-COL_DSR = 'DSR_pct'
-COL_CG  = 'CreditGrowth_ppYoY'
+DATA_DIR = Path("data_processed")
+FIG_DIR = Path("figures")
+FIG_BASENAME = "fig_code13_DSR_CreditGrowth_TimeSeries_US_JP"
 
-# Consistent country colors
-US_COLOR = COLOR_US
-JP_COLOR = COLOR_JP
-LINE_WIDTH = 1.4
-MARKER_SIZE = 3.5
+# ---------------------------------------------------------------------
+# Country color palette (Okabe–Ito safe)
+# ---------------------------------------------------------------------
+COLOR_US = "#b8860b"   # darkgoldenrod
+COLOR_JP = "#1e90ff"   # dodgerblue
 
-def load_panel(path: Path) -> pd.DataFrame:
+# ---------------------------------------------------------------------
+# Matplotlib setup
+# ---------------------------------------------------------------------
+def _configure_matplotlib(fontscale: float = 1.0):
+    plt.rcParams.update({
+        "path.simplify": True,
+        "path.simplify_threshold": 0.8,
+        "font.family": FONT_FAMILY_PREF,
+        "axes.titlesize": 9 * fontscale,
+        "axes.labelsize": 8.5 * fontscale,
+        "xtick.labelsize": 8 * fontscale,
+        "ytick.labelsize": 8 * fontscale,
+        "legend.fontsize": 8 * fontscale,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "savefig.dpi": DPI_DEFAULT,
+        "figure.dpi": DPI_DEFAULT,
+    })
+
+# ---------------------------------------------------------------------
+# Data loader compatible with proc_code03
+# ---------------------------------------------------------------------
+def _load_csv(path: Path) -> pd.DataFrame:
     if not path.exists():
-        raise FileNotFoundError(path)
-    df = pd.read_csv(path, index_col=0)
-    for c in (COL_DSR, COL_CG):
-        if c not in df.columns:
-            raise ValueError(f"column '{c}' missing in {path}")
-    df.index = pd.to_datetime(df.index)
-    df = df.sort_index()
-    df[COL_DSR] = pd.to_numeric(df[COL_DSR], errors='coerce')
-    df[COL_CG]  = pd.to_numeric(df[COL_CG], errors='coerce')
-    return df.dropna(subset=[COL_DSR, COL_CG])
+        raise FileNotFoundError(f"File not found: {path}")
+    df = pd.read_csv(path)
 
-def apply_filters(df: pd.DataFrame, start: int|None, end: int|None) -> pd.DataFrame:
+    # detect date column
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    elif "Date" in df.columns:
+        df["date"] = pd.to_datetime(df["Date"], errors="coerce")
+    elif df.columns[0].lower().startswith("unnamed"):
+        df["date"] = pd.to_datetime(df.iloc[:, 0], errors="coerce")
+    else:
+        raise ValueError(f"No recognizable date column in {path.name}")
+
+    # detect DSR column
+    if "dsr" not in df.columns:
+        if "DSR_pct" in df.columns:
+            df["dsr"] = pd.to_numeric(df["DSR_pct"], errors="coerce")
+        else:
+            raise ValueError(f"'dsr' or 'DSR_pct' not found in {path.name}")
+
+    # detect credit growth column
+    cg_candidates = [
+        "credit_growth_yoy_pp",
+        "CreditGrowth_ppYoY",
+        "CreditGrowthYoY_pct",
+        "credit_growth_yoy_proxy_pct",
+        "credit_growth_pct",
+        "credit_yoy_pct",
+        "credit_yoy_pp",
+        "credit_growth_yoy_percentage_points",
+    ]
+    cg_col = next((c for c in cg_candidates if c in df.columns), None)
+    if cg_col is None:
+        raise ValueError(f"credit-growth column not found in {path.name}")
+    df = df.rename(columns={cg_col: "credit_growth_yoy_pp"})
+
+    out = df[["date", "dsr", "credit_growth_yoy_pp"]].copy()
+    out = out.sort_values("date").reset_index(drop=True)
+    return out
+
+# ---------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------
+def _clip_period(df: pd.DataFrame, start: str | None, end: str | None) -> pd.DataFrame:
     if start:
-        df = df[df.index.year >= start]
+        df = df[df["date"] >= pd.to_datetime(start)]
     if end:
-        df = df[df.index.year <= end]
+        df = df[df["date"] <= pd.to_datetime(end)]
     return df
 
-def maybe_ma(df: pd.DataFrame, window: int|None) -> pd.DataFrame:
+def _apply_ma(df: pd.DataFrame, window: int | None) -> pd.DataFrame:
     if not window or window <= 1:
         return df
-    return df.assign(
-        **{COL_DSR: df[COL_DSR].rolling(window, min_periods=1).mean(),
-           COL_CG:  df[COL_CG].rolling(window, min_periods=1).mean()}
+    out = df.copy()
+    out["credit_growth_yoy_pp"] = (
+        out["credit_growth_yoy_pp"].rolling(window, min_periods=1).mean()
+    )
+    return out
+
+def _build_figure_size(n_panels=2):
+    width = FRL_SINGLE_COL_INCH
+    height = n_panels * PANEL_HEIGHT_INCH + TOP_BOTTOM_PAD
+    return (width, height)
+
+def _format_axes(ax, title: str):
+    ax.set_title(title, loc="left", weight="bold")
+    ax.grid(True, which="major", linestyle=":", linewidth=0.5, alpha=0.25)
+    ax.set_axisbelow(True)
+    ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=6))
+    ax.tick_params(axis="both", which="both", length=3)
+
+# ---------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------
+def _plot_panel(ax, df: pd.DataFrame, country: str, markevery: int = 4, mono: bool = False):
+    # color assignment
+    if mono:
+        color = "black"
+    else:
+        color = COLOR_US if country == "US" else COLOR_JP
+
+    # DSR (solid, thicker)
+    ax.plot(
+        df["date"], df["dsr"],
+        color=color, linestyle="-", linewidth=1.8,
+        label="DSR", solid_capstyle="round"
     )
 
-def plot_panels(us: pd.DataFrame, jp: pd.DataFrame, out: Path, title: str|None, annotate_latest: bool, show: bool=False):
-    # Compute unified y-axis range across both countries
-    all_vals = pd.concat([us[[COL_DSR, COL_CG]], jp[[COL_DSR, COL_CG]]]).values.ravel()
-    all_vals = all_vals[np.isfinite(all_vals)]
-    ymin, ymax = float(np.nanmin(all_vals)), float(np.nanmax(all_vals))
-    span = ymax - ymin if ymax > ymin else 1.0
-    pad = span * 0.05
-    ymin -= pad
-    ymax += pad
+    # Credit Growth (dashed, thinner, same color)
+    ax.plot(
+        df["date"], df["credit_growth_yoy_pp"],
+        color=color, linestyle="--", linewidth=1.1,
+        marker="^", markersize=3.0,
+        markevery=markevery, dash_capstyle="round",
+        label="Credit growth (ΔYoY, pp)"
+    )
 
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True, sharey=True)
-    specs = [
-        (us, 'United States', US_COLOR),
-        (jp, 'Japan', JP_COLOR)
-    ]
-    for ax, (df, label, c_country) in zip(axes, specs):
-        # DSR: dot + line (circle markers)
-        ax.plot(df.index, df[COL_DSR], '-o', color=c_country, label=COL_DSR,
-                lw=LINE_WIDTH, ms=MARKER_SIZE, alpha=0.95)
-        # Credit growth: dot + line (triangle markers)
-        ax.plot(df.index, df[COL_CG], '-^', color=COLOR_NEUTRAL, label=COL_CG,
-                lw=LINE_WIDTH*0.9, ms=MARKER_SIZE, alpha=0.85)
-        ax.set_title(f"{label}: DSR and Credit growth (ΔYoY, pp)")
-        ax.grid(True, alpha=0.3)
-        ax.set_ylim(ymin, ymax)
-        if annotate_latest:
-            last = df.iloc[-1]
-            ax.text(df.index[-1], last[COL_DSR], f" {last[COL_DSR]:.1f}", color=c_country, va='center')
-            ax.text(df.index[-1], last[COL_CG],  f" {last[COL_CG]:.1f}",  color=COLOR_NEUTRAL,  va='center')
-        ax.legend(loc='upper right', frameon=True)
-    axes[0].set_ylabel('Percent / pp')
-    axes[1].set_ylabel('Percent / pp')
-    axes[1].set_xlabel('Quarter')
-    if title:
-        fig.suptitle(title, fontsize=14, y=0.98)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out = figure_name_with_code(__file__, out)
-    final = ensure_unique(out)
-    safe_savefig(fig, final)
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-    return final
+    ax.set_ylabel("Percent / percentage points (pp)")
 
-def main(argv=None):
-    ap = argparse.ArgumentParser(description='US vs JP DSR & Credit growth time-series dual panels')
-    ap.add_argument('--us-csv', default=str(DEFAULT_US))
-    ap.add_argument('--jp-csv', default=str(DEFAULT_JP))
-    ap.add_argument('--out', default=str(DEFAULT_OUT))
-    ap.add_argument('--start', type=int, default=None)
-    ap.add_argument('--end', type=int, default=None)
-    ap.add_argument('--ma', type=int, default=None, help='optional moving-average window (quarters)')
-    ap.add_argument('--no-latest', action='store_true', help='disable latest value annotation')
-    ap.add_argument('--title', default='United States & Japan: DSR and Credit growth (ΔYoY, pp)')
-    args = ap.parse_args(argv)
+# ---------------------------------------------------------------------
+# Export
+# ---------------------------------------------------------------------
+def _export(fig: plt.Figure, outbase: Path, export_tiff: bool = False, dpi: int = DPI_DEFAULT):
+    out_png = outbase.with_suffix(".png")
+    out_pdf = outbase.with_suffix(".pdf")
+    out_eps = outbase.with_suffix(".eps")
+    fig.savefig(out_png, dpi=dpi, bbox_inches="tight")
+    fig.savefig(out_pdf, dpi=dpi, bbox_inches="tight")
+    fig.savefig(out_eps, dpi=dpi, bbox_inches="tight")
+    if export_tiff:
+        fig.savefig(outbase.with_suffix(".tiff"), dpi=max(300, dpi), bbox_inches="tight")
 
-    us = load_panel(Path(args.us_csv))
-    jp = load_panel(Path(args.jp_csv))
-    us = apply_filters(us, args.start, args.end)
-    jp = apply_filters(jp, args.start, args.end)
-    if us.empty or jp.empty:
-        print('[ERROR] filtered data empty; adjust year range or check inputs')
-        return 1
-    us = maybe_ma(us, args.ma)
-    jp = maybe_ma(jp, args.ma)
-    show_flag = (len(sys.argv) == 1)
-    final = plot_panels(us, jp, Path(args.out), args.title, not args.no_latest, show=show_flag)
-    print(f'[OK] figure saved: {final}')
-    return 0
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="FRL-ready color figure: DSR vs Credit Growth (US vs JP, same hue per country)"
+    )
+    parser.add_argument("--us-csv", default=str(DATA_DIR / "proc_code03_US_DSR_CreditGrowth_panel.csv"))
+    parser.add_argument("--jp-csv", default=str(DATA_DIR / "proc_code03_JP_DSR_CreditGrowth_panel.csv"))
+    parser.add_argument("--start", default=None)
+    parser.add_argument("--end", default=None)
+    parser.add_argument("--cg-ma", type=int, default=4)
+    parser.add_argument("--dpi", type=int, default=DPI_DEFAULT)
+    parser.add_argument("--export-tiff", action="store_true")
+    parser.add_argument("--outfile", default=str(FIG_DIR / FIG_BASENAME))
+    parser.add_argument("--mono", action="store_true", help="Preview in monochrome")
+    args = parser.parse_args()
 
-if __name__ == '__main__':  # pragma: no cover
-    sys.exit(main())
+    _configure_matplotlib()
+    Path(args.outfile).parent.mkdir(parents=True, exist_ok=True)
+
+    us = _load_csv(Path(args.us_csv))
+    jp = _load_csv(Path(args.jp_csv))
+
+    us = _clip_period(us, args.start, args.end)
+    jp = _clip_period(jp, args.start, args.end)
+    if len(us) == 0 or len(jp) == 0:
+        raise ValueError("Empty dataset after applying start/end filters.")
+
+    us = _apply_ma(us, args.cg_ma)
+    jp = _apply_ma(jp, args.cg_ma)
+
+    fig_size = _build_figure_size(n_panels=2)
+    fig, axes = plt.subplots(2, 1, figsize=fig_size, sharex=True)
+
+    _format_axes(axes[0], "(a) United States")
+    _plot_panel(axes[0], us, country="US", markevery=4, mono=args.mono)
+
+    _format_axes(axes[1], "(b) Japan")
+    _plot_panel(axes[1], jp, country="JP", markevery=4, mono=args.mono)
+    axes[1].set_xlabel("Year")
+
+    # Shared legend on top
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles, labels, loc="upper center", ncol=2,
+        frameon=False, bbox_to_anchor=(0.5, 1.02)
+    )
+
+    plt.tight_layout(rect=(0, 0, 1, 0.97))
+    _export(fig, Path(args.outfile), export_tiff=args.export_tiff, dpi=args.dpi)
+    plt.close(fig)
+
+    print(f"Saved to: {Path(args.outfile).with_suffix('.png')}")
+    print(f"Saved to: {Path(args.outfile).with_suffix('.pdf')}")
+    print(f"Saved to: {Path(args.outfile).with_suffix('.eps')}")
+    if args.export_tiff:
+        print(f"Saved to: {Path(args.outfile).with_suffix('.tiff')}")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        warnings.warn(str(e))
+        sys.exit(1)

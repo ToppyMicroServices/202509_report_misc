@@ -107,7 +107,8 @@ def fetch_fred_series(series_id: str, out_dir: Path | str = Path("data_raw"), *,
     # Normalize to quarter-end without resample('Q') to avoid deprecation warnings
     df.index = _to_quarter_end(df.index)
     csv_path = out_dir / f"{series_id}.csv"
-    saved = safe_to_csv(df.reset_index(), csv_path, index=False)
+    # Overwrite raw CSV to avoid accumulating AGSEBMPTCMAHDFS_1.csv, HHMSDODNS_1.csv, ...
+    saved = safe_to_csv(df.reset_index(), csv_path, index=False, overwrite=True)
     return df, saved
 
 __all__ = ["fetch_fred_series"]

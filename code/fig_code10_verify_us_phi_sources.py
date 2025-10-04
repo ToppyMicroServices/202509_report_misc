@@ -22,7 +22,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Optional, Tuple
-from util_code01_lib_io import ensure_unique, safe_savefig, safe_to_csv, figure_name_with_code
+from util_code01_lib_io import safe_savefig, safe_to_csv, figure_name_with_code
 from fetch_code08_fred_series import fetch_fred_series
 
 # ---------------------------------------------------------------------------
@@ -140,9 +140,8 @@ def write_report(path: Path, meta: dict):
     for k,v in meta.items():
         lines.append(f"{k}: {v}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    final = ensure_unique(path)
-    final.write_text("\n".join(lines), encoding='utf-8')
-    print(f"[INFO] Report written: {final}")
+    path.write_text("\n".join(lines), encoding='utf-8')
+    print(f"[INFO] Report written: {path}")
 
 
 def plot_series(raw: pd.Series, adj: Optional[pd.Series], info: Optional[dict]):
@@ -160,9 +159,8 @@ def plot_series(raw: pd.Series, adj: Optional[pd.Series], info: Optional[dict]):
     ax.grid(True, alpha=0.3)
     ax.legend()
     outp = figure_name_with_code(__file__, FIG_DIR / 'US_phi_break_verification.png')
-    unique = ensure_unique(outp)
-    safe_savefig(fig, unique)
-    print(f"[INFO] Figure written: {unique}")
+    saved = safe_savefig(fig, outp, overwrite=True)
+    print(f"[INFO] Figure written: {saved}")
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +219,7 @@ def main():
             print(f"[INFO] Prefixed exists; skipping legacy duplicate: {pref_path.name}")
             return pref_path
         legacy_target = figure_name_with_code(__file__, DATA_PROCESSED / legacy_name)
-        return safe_to_csv(df_out, legacy_target, index=False)
+        return safe_to_csv(df_out, legacy_target, index=False, overwrite=True)
     raw_final = _maybe_save(df.reset_index().rename(columns={'index':'DATE'}), 'US_phi_series_raw.csv', pref_raw)
     print(f"[INFO] Saved raw series: {raw_final}")
     adj_final = _maybe_save(df_adj.reset_index().rename(columns={'index':'DATE'}), 'US_phi_series_adjusted.csv', pref_adj)

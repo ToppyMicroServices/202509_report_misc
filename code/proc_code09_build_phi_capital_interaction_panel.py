@@ -61,6 +61,28 @@ JP_CET1     = RAW  / 'CET1_RWA_JP_WB.csv'
 def _log(m: str):
     print(f"[PROC09] {m}")
 
+def _normalize_pp(series: pd.Series, label: str) -> pd.Series:
+    """
+    Normalize a YoY credit growth series to percentage-points (pp).
+    Heuristic based on scale:
+      - If p99(|x|) < 1.0  -> assume FRACTION (e.g., 0.05 for 5%): multiply by 100
+      - If p99(|x|) > 50   -> assume BASIS POINTS (bps): divide by 100
+      - Else               -> already in pp: leave as-is
+    """
+    s = pd.to_numeric(series, errors='coerce').astype(float)
+    p99 = s.abs().quantile(0.99)
+    if pd.isna(p99):
+        _log(f"{label}: p99=NaN (no data) — leaving as-is")
+        return s
+    if p99 < 1.0:
+        _log(f"{label}: detected FRACTION scale (p99={p99:.3f}) -> *100 to pp")
+        return s * 100.0
+    if p99 > 50.0:
+        _log(f"{label}: detected BPS scale (p99={p99:.1f}) -> /100 to pp")
+        return s / 100.0
+    _log(f"{label}: detected PP scale (p99={p99:.1f}) -> keep")
+    return s
+
 
 def _load_cet1(path: Path, country: str) -> pd.DataFrame:
     if not path.exists():
@@ -85,6 +107,8 @@ def _load_cet1(path: Path, country: str) -> pd.DataFrame:
         df['CET1_RWA_pct'] = df['val'] * 100.0
     else:
         df['CET1_RWA_pct'] = df['val']
+    # Guard against impossible CET1 values
+    df['CET1_RWA_pct'] = df['CET1_RWA_pct'].clip(lower=0, upper=100)
     df['Date'] = df['Date'].dt.to_period('Q').dt.to_timestamp('Q')
     df = df[['Date','CET1_RWA_pct']].drop_duplicates(subset=['Date']).sort_values('Date')
     df['country'] = country
@@ -128,16 +152,31 @@ def _load_credit_panel(panel_path: Path, country: str) -> pd.DataFrame:
         df.index = pd.to_datetime(df.index)
     except Exception:
         pass
-    # Accept either CreditGrowth_ppYoY or credit growth alt naming
+    # Accept common variants of the credit growth column
+    candidates = [
+        "CreditGrowth_ppYoY", "creditgrowth_ppyoy",
+        "CreditGrowthYoY_pp", "credit_growth_yoy_pp",
+        "CreditGrowthYoY_pct", "credit_growth_yoy_pct",
+        "credit_growth_ppyoy", "credit_growth_pp"
+    ]
     col = None
-    for c in df.columns:
-        if c.lower() == 'creditgrowth_ppyoy':
-            col = c; break
+    lower_map = {c.lower(): c for c in df.columns}
+    for name in candidates:
+        if name.lower() in lower_map:
+            col = lower_map[name.lower()]
+            break
     if col is None:
         return pd.DataFrame(columns=['Date','CreditGrowth_ppYoY'])
-    sub = df[[col]].rename(columns={col:'CreditGrowth_ppYoY'})
+    # Optional: light sanity check on column name
+    if 'yoy' not in col.lower():
+        _log(f"{country}: picked '{col}' — name lacks 'YoY'; verify source is YoY growth, not a level.")
+    sub = df[[col]].rename(columns={col: 'CreditGrowth_ppYoY'})
+    # Normalize to percentage points
+    sub['CreditGrowth_ppYoY'] = _normalize_pp(sub['CreditGrowth_ppYoY'], f"{country} credit growth")
     sub = sub.dropna().copy()
     sub['Date'] = sub.index.to_period('Q').to_timestamp('Q')
+    _log(f"{country}: credit growth summary (pp) p01={sub['CreditGrowth_ppYoY'].quantile(0.01):.2f}, "
+         f"med={sub['CreditGrowth_ppYoY'].median():.2f}, p99={sub['CreditGrowth_ppYoY'].quantile(0.99):.2f}")
     sub = sub[['Date','CreditGrowth_ppYoY']].drop_duplicates(subset=['Date']).sort_values('Date')
     sub['country'] = country
     return sub
@@ -174,10 +213,14 @@ def build_panel(alt_thin_inverse: bool=False) -> pd.DataFrame:
     # Lead credit growth (within country)
     panel = panel.sort_values(['country','Date'])
     panel['credit_growth_ppYoY'] = panel['CreditGrowth_ppYoY']
-    panel['credit_growth_ppYoY_lead'] = panel.groupby('country')['credit_growth_ppYoY'].shift(-1)
+    # keep raw lead for analysis
+    panel['credit_growth_ppYoY_lead_raw'] = panel.groupby('country')['credit_growth_ppYoY'].shift(-1)
+    # winsorized copy for plotting robustness (does not alter the raw series)
+    p01, p99 = panel['credit_growth_ppYoY_lead_raw'].quantile([0.01, 0.99])
+    panel['credit_growth_ppYoY_lead'] = panel['credit_growth_ppYoY_lead_raw'].clip(lower=p01, upper=p99)
     panel['phi_x_Thin'] = panel['phi'] * panel['Thin']
-    # Drop last per country (lead NaN)
-    panel = panel.dropna(subset=['credit_growth_ppYoY_lead'])
+    # Drop last per country (lead NaN) using the raw series to define availability
+    panel = panel.dropna(subset=['credit_growth_ppYoY_lead_raw'])
     # Terciles on CET1_RWA_pct pooled
     pct_vals = panel['CET1_RWA_pct']
     q1, q2 = pct_vals.quantile([1/3, 2/3])
@@ -186,7 +229,9 @@ def build_panel(alt_thin_inverse: bool=False) -> pd.DataFrame:
         if v <= q2: return 'Mid'
         return 'High'
     panel['Thin_tercile'] = panel['CET1_RWA_pct'].apply(tercile)
-    panel = panel[['Date','country','phi','CET1_RWA_pct','Thin_raw','Thin','credit_growth_ppYoY','credit_growth_ppYoY_lead','phi_x_Thin','Thin_tercile']]
+    panel = panel[['Date','country','phi','CET1_RWA_pct','Thin_raw','Thin',
+                   'credit_growth_ppYoY','credit_growth_ppYoY_lead_raw','credit_growth_ppYoY_lead',
+                   'phi_x_Thin','Thin_tercile']]
     panel = panel.sort_values(['country','Date']).reset_index(drop=True)
     return panel
 
@@ -204,6 +249,16 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
     panel.to_csv(out_path, index=False)
     _log(f'WROTE {out_path.name} rows={len(panel)} countries={panel.country.nunique()} date_range={panel.Date.min().date()}->{panel.Date.max().date()}')
+
+    # Lightweight debug CSV for fig_code14
+    dbg = panel[['Date','country','phi','CET1_RWA_pct','credit_growth_ppYoY',
+                 'credit_growth_ppYoY_lead_raw','credit_growth_ppYoY_lead','Thin_tercile']].copy()
+    dbg_out = PROC / 'proc_code09_phi_capital_interaction_panel_check.csv'
+    try:
+        dbg.to_csv(dbg_out, index=False)
+        _log(f'WROTE {dbg_out.name} (debug subset)')
+    except Exception as e:
+        _log(f'WARN: could not write debug subset: {e}')
     return 0
 
 if __name__ == '__main__':  # pragma: no cover

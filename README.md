@@ -6,7 +6,7 @@ This repository contains the reproducible code, processed data, and figure outpu
 - `code/` – fetch / processing / figure / verification scripts.
 - `data_raw/` – raw source files (re-downloadable). Missing files can be restored under the same name.
 - `data_processed/` – deterministic derived series (panels, ratios, decompositions).
-- `figures/` – final figures (some auto-suffixed to avoid overwrite).
+- `figures/` – final figures (reruns overwrite the same filenames; pass `--keep-versions` to retain numbered copies).
 - `fig_code16/` – outputs for code16 figures (US credit creation shift, Fed support, NBFI parallel, φ vs Fed MBS/Total).
 - `manifests/` – machine-readable integrity / provenance metadata.
 - `docs/` – documentation (this README, method notes if any).
@@ -28,6 +28,7 @@ This repository contains the reproducible code, processed data, and figure outpu
 | Orchestrator robustness | `fig_code08_graph.sh` omission detection fixed (regex base-id extraction) |
 | φ auto-detect messaging | `fig_code05_phi_offbalance_simple.py` now prints column pattern guidance when US φ not found |
 | Date column flexibility | Scripts accept both `DATE` and `observation_date` for time series inputs |
+| Figure overwrite policy | `fig_code0x` scripts overwrite outputs by default; pass `--keep-versions` to retain numbered variants |
 
 ## 4. Naming / Prefix Conventions (2025Q3+)
 | Type | Prefix | Example | Meaning |
@@ -41,7 +42,7 @@ This repository contains the reproducible code, processed data, and figure outpu
 Rules:
 1. Every output name begins with the generating script's prefix for traceability.
 2. During migration, scripts attempt prefixed filename first, then legacy fallback if present.
-3. Processed CSVs use stable names (no numeric suffix); figures may add suffixes (timestamps or labels).
+3. Processed CSVs use stable names; figure scripts now overwrite their targets by default (use `--keep-versions` when available to append suffixes).
 4. First column in processed panels is explicit quarter-end timestamp (`to_period('Q').to_timestamp('Q')`).
 
 ## 5. DSR Panel Construction Logic (Summary)
@@ -67,7 +68,7 @@ python code/proc_code03_build_dsr_creditgrowth_panels.py
 | 03 | fig_code03_mbs_to_gdp_dual_axis.py | Deprecated — use fig_code02_mbs_to_gdp.py |
 | 04 | fig_code04_phi_offbalance.py | Detailed φ off-balance analysis |
 | 05 | fig_code05_phi_offbalance_simple.py | Simplified φ comparison (US auto-detect guidance) |
-| 06 | fig_code06_scatter_dsr_creditgrowth.py | DSR vs Credit Growth scatter + OLS |
+| 06 | fig_code06_scatter_dsr_creditgrowth.py | DSR vs Credit Growth scatter + OLS (overwrites unless `--keep-versions`) |
 | 07 | fig_code07_k_decomp_generic.py | Generic k decomposition plot |
 | 08 | fig_code08_graph.sh | Batch quality / orchestrator script |
 | 09 | fig_code09_jp_jhf_rmbs_vs_gdp.py | JP JHF RMBS vs GDP ratio |
@@ -75,9 +76,17 @@ python code/proc_code03_build_dsr_creditgrowth_panels.py
 | 11 | fig_code11_jp_jhf_rmbs_vs_gdp_experimental.py | Experimental extended variant |
 | 12 | fig_code12_dsr_creditgrowth_us_jp_dualpanels.py | US/JP dual-panel DSR+CreditGrowth |
 | 13 | fig_code13_dsr_creditgrowth_us_jp_timeseries.py | Time series comparison |
-| 14 | fig_code14_scatter_phi_capital_thinness.py | φ vs capital thinness scatter |
+| 14 | fig_code14_scatter_phi_capital_thinness.py | φ vs capital thinness scatter (defaults to `data_processed/proc_code09_phi_capital_interaction_panel.csv`) |
 | 15 | fig_code15_dsr_k_quantity_stack.py | DSR k-quantity stack visualization |
 | 16 | fig_code16_fred.py | US bank-share (BIS), Fed balance sheet (nominal/normalized/share), NBFI parallel, and US φ vs Fed MBS/Total |
+
+### fig_code14 quick start
+```
+python code/fig_code14_scatter_phi_capital_thinness.py \
+    --csv data_processed/proc_code09_phi_capital_interaction_panel.csv \
+    --outfile figures/fig_code14_scatter_phi_capital_thinness
+```
+Outputs both `_wo_OLS` and `_w_OLS` panels (plus country-specific variants when `country` is present) and overwrites existing files unless `--keep-versions` is supplied. The script also writes debug CSV snapshots under `data_processed/` and, when applicable, an OLS summary (`fig_code14_regression_summary.csv`).
 
 ## 8. US φ Auto-Detection Guidance (fig_code05)
 If the script finds a candidate file but no recognizable US φ column, it logs:
@@ -239,5 +248,3 @@ Steps to enable DOI (once the paper is ready or for a software-only DOI):
 Notes:
 - If/when the paper DOI is available, add it into `.zenodo.json` under `related_identifiers` with relation `isSupplementTo` (or `isPartOf`/`isDocumentedBy` as appropriate).
 - Avoid including huge raw datasets in the archived artifact; this repo already ignores large HMDA CSVs. Releases should contain code and small, deterministic processed data.
-
-

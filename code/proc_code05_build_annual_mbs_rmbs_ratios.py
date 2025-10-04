@@ -207,7 +207,7 @@ def main(argv=None) -> int:
         print('[WARN] US ratio unavailable')
     else:
         path_us = PROC_DIR/'proc_code05_US_MBS_to_NGDP_annual.csv'
-        safe_to_csv(us.reset_index(), path_us, index=False)
+        safe_to_csv(us.reset_index(), path_us, index=False, overwrite=True)
         print('[OK] wrote', path_us)
 
     jp = build_jp()
@@ -219,7 +219,7 @@ def main(argv=None) -> int:
         print('[WARN] JP ratio unavailable')
     else:
         path_jp = PROC_DIR/'proc_code05_JP_RMBS_to_NGDP_annual.csv'
-        safe_to_csv(jp.reset_index(), path_jp, index=False)
+        safe_to_csv(jp.reset_index(), path_jp, index=False, overwrite=True)
         print('[OK] wrote', path_jp)
 
     if us is not None and jp is not None:
@@ -230,7 +230,7 @@ def main(argv=None) -> int:
                 print('[WARN] comparison slice 2012–2021 empty')
             else:
                 path_cmp = PROC_DIR/'proc_code05_JP_US_MBS_RMBS_to_NGDP_compare_2012_2021.csv'
-                safe_to_csv(sl.reset_index(), path_cmp, index=False)
+                safe_to_csv(sl.reset_index(), path_cmp, index=False, overwrite=True)
                 print('[OK] wrote', path_cmp)
         else:
             print('[WARN] no US/JP overlap for comparison')

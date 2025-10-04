@@ -1,184 +1,389 @@
-"""fig_code06_scatter_dsr_creditgrowth
-
-US single-country scatter: Credit growth YoY (pp) vs Debt Service Ratio (DSR, %).
-
-Two data sourcing modes:
-    (A) Raw source mode (default):
-            - BIS DSR (largest bis_dp_search_export_*.csv)
-            - HHMSDODNS (mortgage outstanding) -> 4Q pct change proxy
-        (B) Processed panel fallback (--panel or auto):
-                        - Prefers data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv (if present)
-                            else falls back to legacy data_processed/US_DSR_CreditGrowth_panel.csv
-                            Expected columns: DSR_pct, CreditGrowth_ppYoY (already aligned quarterly)
-
-If raw sources are missing, the script auto-falls back to the panel CSV when present.
-Outputs always get fig_code06_ prefix via figure_name_with_code.
+#!/usr/bin/env python3
 """
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from math import sqrt
+fig_code06_scatter_dsr_creditgrowth.py
+
+FRL-friendly scatter (credit growth vs DSR) + binned line with IQR band.
+- Robust column detection (DSR & credit growth), with "--dsr-col" / "--credit-col" overrides.
+- Auto percent handling: if values look like fractions (|median| <= 0.3), convert to percent.
+- Single-column figure size, light y-grid, compact margins.
+- Figures -> figures/, tidy CSV (binned) -> data_processed/.
+
+Inputs (default):
+  data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv
+Expected columns (any of the aliases below are accepted automatically):
+  DSR: ['DSR_pct','DSR','dsr_pct','DebtServiceRatio_pct','DSR_percent','DSR_frac','dsr']
+  Credit growth YoY: many variants (see CREDIT_CANDIDATES in code)
+
+Outputs:
+  figures/fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL.png
+  figures/fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL_binned.png
+  data_processed/fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL_binned_data.csv
+"""
+
+from __future__ import annotations
 from pathlib import Path
-from util_code01_lib_io import find, safe_savefig, ensure_unique, safe_to_csv, figure_name_with_code
+import argparse
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator, FormatStrFormatter
 
-OUTDIR = Path("figures")
-PREF_PANEL = Path("data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv")
-LEG_PANEL  = Path("data_processed/US_DSR_CreditGrowth_panel.csv")
-PANEL_DEFAULT = PREF_PANEL if PREF_PANEL.exists() else (LEG_PANEL if LEG_PANEL.exists() else LEG_PANEL)
+# ---------- IO utils (fallback if your project helpers are unavailable) ----------
+try:
+    from util_code01_lib_io import figure_name_with_code, safe_savefig, safe_to_csv
+except Exception:
+    def figure_name_with_code(_this_file: str, out_path: Path) -> Path:
+        return Path(out_path)
+    def safe_savefig(fig, path: Path, dpi: int = 600, overwrite: bool = True, **kwargs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(path, dpi=dpi, bbox_inches="tight", **kwargs)
+    def safe_to_csv(df: pd.DataFrame, path: Path, overwrite: bool = True, **kwargs):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        kwargs.pop('overwrite', None)
+        df.to_csv(path, **kwargs)
 
-def load_bis_dsr(country_code="US", sector="P"):
-    """Return (df, err) where df has a single column 'DSR'.
+# ---------- Paths ----------
+ROOT = Path(__file__).resolve().parents[1]
+PROC = ROOT / "data_processed"
+FIGS = ROOT / "figures"
 
-    Picks the largest BIS export file (assumed most complete). Filters by KEY pattern Q.<country>.<sector>.
-    """
-    files = find(["bis_dp_search_export_*.csv"])
-    if not files: return None, "BIS DSR export not found"
-    files = sorted(files, key=lambda p: p.stat().st_size, reverse=True)
-    df = pd.read_csv(files[0], skiprows=2)
-    df.columns = [c.strip() for c in df.columns]
-    keycol = [c for c in df.columns if "KEY" in c][0]
-    tcol   = [c for c in df.columns if "TIME" in c][0]
-    vcol   = [c for c in df.columns if "OBS_VALUE" in c][0]
-    pick = df[df[keycol].str.contains(f"Q.{country_code}.{sector}", na=False)].copy()
-    if pick.empty: return None, f"no DSR for {country_code}.{sector}"
-    pick[tcol] = pd.to_datetime(pick[tcol], errors="coerce")
-    pick[vcol] = pd.to_numeric(pick[vcol], errors="coerce")
-    pick = pick.dropna(subset=[tcol, vcol]).set_index(tcol).sort_index()
-    return pick[[vcol]].rename(columns={vcol:"DSR"}), None
+DEFAULT_PANEL = PROC / "proc_code03_US_DSR_CreditGrowth_panel.csv"
 
-def load_credit_growth_proxy_us():
-    """Return (df, err) containing quarterly CreditYoY_% from HHMSDODNS.
+# ---------- Column aliases ----------
+DSR_CANDIDATES = [
+    "DSR_pct", "DSR", "dsr_pct", "DebtServiceRatio_pct",
+    "DSR_percent", "DSR_Percent", "DSR_frac", "dsr"
+]
 
-    CreditYoY_% = 4-quarter percent change * 100.
-    """
-    files = find(["HHMSDODNS.csv"])
-    if not files: return None, "US mortgage CSV not found"
-    s = pd.read_csv(files[0])
-    dt = [c for c in s.columns if "DATE" in c.upper()][0]
-    val= [c for c in s.columns if c != dt][0]
-    s[dt] = pd.to_datetime(s[dt], errors="coerce")
-    s[val]= pd.to_numeric(s[val], errors="coerce")
-    s = s.dropna(subset=[dt, val]).set_index(dt).sort_index()
-    g = (s[val].pct_change(4)*100).rename("CreditYoY_%")
-    return g.to_frame(), None
+CREDIT_CANDIDATES = [
+    "credit_growth_yoy_pct", "CreditGrowthYoY_pct", "CreditYoY_pct",
+    "YoY_credit_growth_pct", "credit_growth_yoy_proxy_pct",
+    "credit_proxy_yoy_pct", "credit_growth_pct", "credit_yoy_pct",
+    "Credit_YoY_pct", "CreditGrowthYoY", "CreditGrowth_pct",
+    "Credit_YoY", "YoY_credit_growth", "credit_growth_yoy",
+    "credit_growth", "CreditGrowthYoY_proxy", "Credit_Growth_YoY_pct",
+    # Panel variants in this repo
+    "CreditGrowth_ppYoY", "CreditGrowth_pp", "CreditGrowth_pp_yoy"
+]
 
-def _from_panel(panel_path: Path):
-    if not panel_path.exists():
-        return None, f"panel CSV not found: {panel_path}"
-    df = pd.read_csv(panel_path, index_col=0)
-    # try to parse index
-    try:
-        df.index = pd.to_datetime(df.index)
-    except Exception:
-        pass
-    needed = {'DSR_pct','CreditGrowth_ppYoY'}
-    if not needed.issubset(df.columns):
-        return None, f"panel missing columns {needed - set(df.columns)}"
-    tidy = df[['DSR_pct','CreditGrowth_ppYoY']].dropna()
-    tidy = tidy.rename(columns={'DSR_pct':'DSR','CreditGrowth_ppYoY':'CreditYoY_%'})
-    if tidy.empty:
-        return None, 'panel after dropna empty'
-    return tidy, None
+# ---------- Styling ----------
+def _set_matplotlib_rc():
+    plt.rcParams.update({
+        "font.size": 9,
+        "axes.titlesize": 9,
+        "axes.labelsize": 9,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.alpha": 0.22,
+        "grid.linestyle": "-",
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        # Embed fonts in vector outputs
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
+    })
 
-def build_dataset(use_panel: bool=False, panel_path: Path=PANEL_DEFAULT):
-    if use_panel:
-        return _from_panel(panel_path)
-    dsr, e1 = load_bis_dsr("US","P")
-    cg , e2 = load_credit_growth_proxy_us()
-    if dsr is None or cg is None:
-        # fallback if panel exists
-        panel, pe = _from_panel(panel_path)
-        if panel is not None:
-            print(f"[INFO] fallback to panel CSV ({panel_path}) due to raw missing: {e1 or ''} {e2 or ''}")
-            return panel, None
-        return None, f"raw missing ({e1},{e2}) and panel fallback failed ({pe})"
-    df = dsr.join(cg, how='inner').dropna()
-    if df.empty:
-        panel, pe = _from_panel(panel_path)
-        if panel is not None:
-            print(f"[INFO] fallback to panel CSV ({panel_path}) due to join empty")
-            return panel, None
-        return None, f"no overlap (and panel fallback failed: {pe})"
-    return df, None
+# ---------- Helpers ----------
+def _pick_col(df: pd.DataFrame, prefer: str | None, candidates: list[str], label: str) -> str:
+    """Pick a column by explicit name (if provided) or from a list of aliases."""
+    if prefer:
+        if prefer in df.columns:
+            return prefer
+        raise SystemExit(f"{label} column '{prefer}' not found; available: {list(df.columns)}")
+    for c in candidates:
+        if c in df.columns:
+            return c
+    raise SystemExit(f"{label} column not found; tried {candidates}")
 
-def make(argv=None):
-    import argparse
-    ap = argparse.ArgumentParser(description='US DSR vs Credit growth scatter (raw or panel fallback)')
-    ap.add_argument('--panel', action='store_true', help='Force use of processed panel CSV instead of raw sources')
-    ap.add_argument('--panel-csv', default=str(PANEL_DEFAULT))
-    ap.add_argument('--out-prefix', default='SCATTER_US_DSR_vs_CreditGrowth_FINAL')
-    args = ap.parse_args(argv)
-    df, err = build_dataset(use_panel=args.panel, panel_path=Path(args.panel_csv))
-    if df is None:
-        print('[DSR scatter] skip:', err)
-        return 0
-    fig, ax = plt.subplots(figsize=(5.5,4.2))
-    ax.scatter(df["DSR"], df["CreditYoY_%"], alpha=0.85, edgecolor='k', linewidths=0.3)
+def _to_percent_if_fraction(s: pd.Series) -> pd.Series:
+    """If median(|x|) <= 0.3, treat as fraction and convert to percent."""
+    med = float(np.nanmedian(np.abs(s.values)))
+    if med <= 0.3:
+        return s * 100.0
+    return s
 
-    # OLS with intercept
-    n = len(df)
-    X = np.vstack([np.ones(n), df["DSR"].values]).T
-    y = df["CreditYoY_%"].values
-    beta = np.linalg.lstsq(X, y, rcond=None)[0]
-    y_hat = X @ beta
-    resid = y - y_hat
-    sse = float(np.sum(resid**2))
-    sst = float(np.sum((y - y.mean())**2))
-    r2 = 1 - sse/sst if sst > 0 else float('nan')
-    df_resid = max(n - 2, 1)
-    # variance-covariance matrix
-    try:
-        xtx_inv = np.linalg.inv(X.T @ X)
-        sigma2 = sse / df_resid
-        se_slope = sqrt(sigma2 * xtx_inv[1,1]) if xtx_inv[1,1] > 0 else float('nan')
-    except Exception:
-        se_slope = float('nan')
-    if se_slope and se_slope != 0 and not np.isnan(se_slope):
-        t_slope = beta[1] / se_slope
+def _load_panel(path: Path, dsr_col_arg: str | None, credit_col_arg: str | None,
+                start_year: int | None, end_year: int | None) -> pd.DataFrame:
+    # Accept CSV indexed by date or with a Date column
+    df = pd.read_csv(path)
+    if df.columns[0].lower() in ("date", "time", "period"):
+        df["__Date"] = pd.to_datetime(df.iloc[:, 0])
+        df = df.set_index("__Date")
+    elif "Date" in df.columns:
+        df["__Date"] = pd.to_datetime(df["Date"])
+        df = df.set_index("__Date")
     else:
-        t_slope = float('nan')
-    # p-value (two-sided) using scipy if available else normal approximation
-    def _p_two_sided(t, df_):
-        try:
-            from scipy.stats import t as student_t  # type: ignore
-            return 2*student_t.sf(abs(t), df_)
-        except Exception:
-            # normal approx
-            from math import erf, sqrt
-            if np.isnan(t):
-                return float('nan')
-            return 2*(1-0.5*(1+erf(abs(t)/sqrt(2))))
-    p_slope = _p_two_sided(t_slope, df_resid)
+        # assume first column is index
+        df = pd.read_csv(path, parse_dates=True, index_col=0)
 
-    xg = np.linspace(df["DSR"].min(), df["DSR"].max(), 200)
-    ax.plot(xg, beta[0] + beta[1]*xg, linewidth=1.0, label=f"OLS slope={beta[1]:.3f}")
-    ax.set_xlabel("Debt Service Ratio (US, PNFS)")
-    ax.set_ylabel("Credit growth YoY (proxy, %)")
-    ax.set_title("US: Credit growth vs DSR (quarterly)", color="black")
-    ax.grid(True, alpha=0.3)
-    # Annotation box
-    stats_text = (
-        f"n={n}\nR²={r2:.3f}\nintercept={beta[0]:.3f}\n"
-        f"slope={beta[1]:.3f}\nt={t_slope:.2f}\np={p_slope:.3g}"
+    # Normalize to quarter-end
+    df.index = pd.to_datetime(df.index).to_period("Q").to_timestamp("Q")
+    df = df.sort_index()
+    # Pick columns
+    dsr_col = _pick_col(df, dsr_col_arg, DSR_CANDIDATES, "DSR")
+    credit_col = _pick_col(df, credit_col_arg, CREDIT_CANDIDATES, "credit-growth")
+    out = df[[dsr_col, credit_col]].copy()
+    out.columns = ["DSR_raw", "CreditYoY_raw"]
+
+    # Date filtering
+    if start_year:
+        out = out[out.index.year >= start_year]
+    if end_year:
+        out = out[out.index.year <= end_year]
+
+    # Drop missing rows and convert to percent if necessary
+    out = out.dropna()
+    out["DSR_pct"] = _to_percent_if_fraction(out["DSR_raw"])
+    out["CreditYoY_pct"] = _to_percent_if_fraction(out["CreditYoY_raw"])
+    out = out[["DSR_pct", "CreditYoY_pct"]]
+    print(f"[INFO] DSR source='{dsr_col}', Credit source='{credit_col}', rows={len(out)}")
+    return out
+
+# ---------- Plotters ----------
+def _nice_percent_ticks(vmin: float, vmax: float, target_ticks: int = 5):
+    # choose step from preferred list to get 3–6 ticks
+    span = max(vmax - vmin, 1e-6)
+    candidates = [10.0, 5.0, 2.0, 1.0, 0.5]
+    best = candidates[-1]
+    for step in candidates:
+        cnt = span / step
+        if 3 <= cnt <= 6:
+            best = step
+            break
+    # compute start at a multiple of step
+    start = np.floor(vmin / best) * best
+    ticks = np.arange(start, vmax + 0.5 * best, best)
+    # trim to range with small padding
+    ticks = ticks[(ticks >= vmin - 1e-9) & (ticks <= vmax + 1e-9)]
+    return ticks, best
+
+def _format_axes_percent(ax):
+    # determine ticks based on current limits
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    xticks, xstep = _nice_percent_ticks(xmin, xmax)
+    yticks, ystep = _nice_percent_ticks(ymin, ymax)
+    ax.set_xticks(xticks)
+    ax.set_yticks(yticks)
+    # decimals: if step >= 5 -> 0 decimals, else 1
+    ax.xaxis.set_major_formatter(FormatStrFormatter('%.0f%%' if xstep >= 5 else '%.1f%%'))
+    ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f%%' if ystep >= 5 else '%.1f%%'))
+
+def make_scatter(
+    df: pd.DataFrame,
+    out_png: Path,
+    dpi: int = 600,
+    show_hexbin: bool = False,
+    title: str | None = None,
+    overwrite: bool = True,
+    save_pdf: bool = False,
+    save_eps: bool = False,
+    save_tiff: bool = False,
+):
+    """Single-column scatter with minimal chrome; legend distinguishes pre/post-2010."""
+    # ~90 mm width => 3.54 inches
+    fig, ax = plt.subplots(figsize=(3.54, 2.8), constrained_layout=True)
+    x = df["DSR_pct"].to_numpy()
+    y = df["CreditYoY_pct"].to_numpy()
+
+    if show_hexbin:
+        # Density background (kept subtle; FRL often prefers simpler figures)
+        ax.hexbin(x, y, gridsize=20, cmap="cividis", mincnt=1, linewidths=0, alpha=0.6)
+
+    mask_pre = df.index < pd.Timestamp("2010-01-01")
+    # marker size ~ 4–6 px equivalent: use small pt^2; alpha 0.6–0.8
+    ax.scatter(x[mask_pre], y[mask_pre], s=20, facecolor="none",
+               edgecolor="#D97706", linewidth=0.9, alpha=0.75, label="pre-2010")
+    ax.scatter(x[~mask_pre], y[~mask_pre], s=18, facecolor="#123A5B",
+               edgecolor="none", alpha=0.70, label="post-2010")
+
+    # Minimal in-figure footnote: n and clipping note (main notes should go in caption)
+    n = len(df)
+
+    ax.set_xlabel("Debt Service Ratio (%, PNFS)")
+    ax.set_ylabel("Credit growth YoY (%)")
+
+    # Trim to 1–99th pct to avoid huge axes due to a few outliers
+    x_lo, x_hi = np.nanquantile(x, [0.01, 0.99])
+    y_lo, y_hi = np.nanquantile(y, [0.01, 0.99])
+    ax.set_xlim(x_lo - 0.02*(x_hi-x_lo), x_hi + 0.02*(x_hi-x_lo))
+    ax.set_ylim(y_lo - 0.05*(y_hi-y_lo), y_hi + 0.05*(y_hi-y_lo))
+
+    # set limits from 1–99th pct then format percent ticks & labels
+    _format_axes_percent(ax)
+    ax.grid(True, axis="y")
+    leg = ax.legend(loc="lower right", frameon=True, fontsize=8)
+    leg.get_frame().set_edgecolor("0.7")
+    leg.get_frame().set_alpha(0.95)
+
+    # small footnote
+    ax.text(0.01, 0.02, f"n={n}; clipped 1–99p", transform=ax.transAxes,
+            fontsize=7, color="#444", ha="left", va="bottom",
+            bbox=dict(fc="white", ec="0.85", alpha=0.9, lw=0.5, pad=2.5))
+
+    if title:
+        ax.set_title(title, fontsize=9)
+    save_path = figure_name_with_code(__file__, out_png)
+    safe_savefig(fig, save_path, dpi=dpi, overwrite=overwrite)
+    # Default: also save embedded-font PDF
+    fig.savefig(str(save_path.with_suffix('.pdf')), bbox_inches="tight")
+    if save_eps:
+        fig.savefig(str(save_path.with_suffix('.eps')), bbox_inches="tight", format='eps')
+    if save_tiff:
+        fig.savefig(str(save_path.with_suffix('.tiff')), bbox_inches="tight", dpi=max(dpi, 600), format='tiff')
+    print("saved:", save_path)
+
+def make_binned(
+    df: pd.DataFrame,
+    out_png: Path,
+    tidy_out: Path,
+    bin_width: float = 0.25,
+    dpi: int = 600,
+    bin_mode: str = "quantile",
+    n_bins: int = 12,
+    n_boot: int = 400,
+    show_mean: bool = False,
+    title: str | None = None,
+    overwrite: bool = True,
+):
+    """Modern binned relation: quantile bins + 95% CI (bootstrap) + median line.
+
+    - bin_mode: 'quantile' (default) uses equal-count bins; 'width' uses fixed bin_width.
+    - n_boot: number of bootstrap resamples per bin for 95% CI of the mean.
+    - show_mean: if True, overlay mean line (thin, dashed) in addition to the median.
+    """
+    s_x = df["DSR_pct"].astype(float)
+    s_y = df["CreditYoY_pct"].astype(float)
+
+    if bin_mode == "quantile":
+        cats = pd.qcut(s_x, q=n_bins, duplicates='drop')
+        mids = np.array([iv.mid for iv in cats.cat.categories]) if hasattr(cats, 'cat') else None
+        g = df.groupby(cats, observed=True)
+    else:
+        x = s_x.to_numpy()
+        x_min = float(np.floor(np.nanmin(x) / bin_width) * bin_width)
+        x_max = float(np.ceil(np.nanmax(x)  / bin_width) * bin_width)
+        edges = np.arange(x_min, x_max + bin_width*0.5, bin_width)
+        bins = pd.cut(s_x, edges, include_lowest=True)
+        mids = np.array([iv.mid for iv in bins.cat.categories]) if hasattr(bins, 'cat') else None
+        g = df.groupby(bins, observed=True)
+
+    # Aggregate
+    agg = g.agg(DSR_mid=("DSR_pct", "mean"),
+                mean_yoy=("CreditYoY_pct", "mean"),
+                median_yoy=("CreditYoY_pct", "median"),
+                q25=("CreditYoY_pct", lambda s: s.quantile(0.25)),
+                q75=("CreditYoY_pct", lambda s: s.quantile(0.75)),
+                n=("CreditYoY_pct", "count"))
+    # No dropna before CI assignment to keep lengths aligned
+
+    # Bootstrap 95% CI for mean (within each bin)
+    ci_lo = []
+    ci_hi = []
+    rng = np.random.default_rng(42)
+    for _, grp in g:
+        vals = grp["CreditYoY_pct"].dropna().to_numpy()
+        if len(vals) >= 3:
+            draws = rng.choice(vals, size=(n_boot, len(vals)), replace=True).mean(axis=1)
+            ci_lo.append(np.percentile(draws, 2.5))
+            ci_hi.append(np.percentile(draws, 97.5))
+        else:
+            ci_lo.append(np.nan)
+            ci_hi.append(np.nan)
+    # Assign CI arrays; lengths align with observed=True and no dropna above
+    agg["ci_lo"], agg["ci_hi"] = ci_lo, ci_hi
+
+    # Now sort and reset index
+    agg = agg.sort_values("DSR_mid").reset_index(drop=True)
+
+    fig, ax = plt.subplots(figsize=(3.54, 2.8), constrained_layout=True)
+    # Prefer 95% CI shading; fallback to IQR if CI is NaN
+    lo = np.where(np.isnan(agg["ci_lo"]), agg["q25"].to_numpy(), agg["ci_lo"].to_numpy())
+    hi = np.where(np.isnan(agg["ci_hi"]), agg["q75"].to_numpy(), agg["ci_hi"].to_numpy())
+    ax.fill_between(agg["DSR_mid"], lo, hi, color="#9DBAD6", alpha=0.28, lw=0)
+    # Median line as primary signal
+    ax.plot(agg["DSR_mid"], agg["median_yoy"], lw=1.9, color="#1F4E79", marker="o", ms=3.5)
+    if show_mean:
+        ax.plot(agg["DSR_mid"], agg["mean_yoy"], lw=1.0, ls="--", color="#3E5C76", alpha=0.7)
+
+    ax.set_xlabel("DSR (%, bin mid)")
+    ax.set_ylabel("Credit growth YoY (%)")
+    _format_axes_percent(ax)
+    ax.grid(True, axis="y")
+    if title:
+        ax.set_title(title, fontsize=9)
+
+    save_path = figure_name_with_code(__file__, out_png)
+    safe_savefig(fig, save_path, dpi=dpi, overwrite=overwrite)
+    print("saved:", save_path)
+
+    tidy = agg.rename(columns={"median_yoy":"median", "mean_yoy":"mean"})
+    tidy_path = figure_name_with_code(__file__, tidy_out)
+    safe_to_csv(tidy, tidy_path, index=False, overwrite=True)
+    print("saved:", tidy_path)
+
+# ---------- Main ----------
+def main():
+    _set_matplotlib_rc()
+    ap = argparse.ArgumentParser(description="FRL-friendly scatter of Credit growth vs DSR (plus binned line)")
+    ap.add_argument("--panel", default=str(DEFAULT_PANEL))
+    ap.add_argument("--dsr-col", default=None, help="explicit DSR column name (optional)")
+    ap.add_argument("--credit-col", default=None, help="explicit credit growth column name (optional)")
+    ap.add_argument("--start-year", type=int, default=None)
+    ap.add_argument("--end-year", type=int, default=None)
+    ap.add_argument("--bin-width", type=float, default=0.25)
+    ap.add_argument("--bin-mode", choices=["quantile","width"], default="quantile")
+    ap.add_argument("--n-bins", type=int, default=12)
+    ap.add_argument("--boots", type=int, default=400, help="bootstrap reps per bin for 95% CI")
+    ap.add_argument("--show-mean", action="store_true", help="overlay mean line (dashed)")
+    ap.add_argument("--hexbin", action="store_true", help="overlay density background (off by default)")
+    ap.add_argument("--dpi", type=int, default=600)
+    ap.set_defaults(overwrite=True)
+    ap.add_argument("--overwrite", action="store_true", dest="overwrite",
+                    help="overwrite outputs (default: on)")
+    ap.add_argument("--keep-versions", action="store_false", dest="overwrite",
+                    help="append numeric suffix instead of overwriting")
+    ap.add_argument("--save-eps", action="store_true")
+    ap.add_argument("--save-tiff", action="store_true")
+    ap.add_argument("--title", default=None, help="small title (optional; default: no title)")
+    # Outputs (figures -> figures/, tidy CSV -> data_processed/)
+    ap.add_argument("--scatter-out", default="fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL.png")
+    ap.add_argument("--binned-out",  default="fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL_binned.png")
+    ap.add_argument("--binned-csv",  default="fig_code06_SCATTER_US_DSR_vs_CreditGrowth_FINAL_binned_data.csv")
+
+    args = ap.parse_args()
+    panel_path = Path(args.panel)
+
+    df = _load_panel(panel_path, args.dsr_col, args.credit_col, args.start_year, args.end_year)
+
+    make_scatter(
+        df=df,
+        out_png=FIGS / args.scatter_out,
+        dpi=args.dpi,
+        show_hexbin=args.hexbin,
+        title=args.title,
+        overwrite=args.overwrite,
+        save_eps=args.save_eps,
+        save_tiff=args.save_tiff,
     )
-    ax.legend(loc="best")
-    ax.text(0.02, 0.98, stats_text, ha='left', va='top', transform=ax.transAxes,
-            fontsize=9, family='monospace', bbox=dict(facecolor='white', alpha=0.7, edgecolor='gray', linewidth=0.5))
-    OUTDIR.mkdir(parents=True, exist_ok=True)
-    fig_path = figure_name_with_code(__file__, OUTDIR/f"{args.out_prefix}.png")
-    fig_written = ensure_unique(fig_path)
-    safe_savefig(fig, fig_written)
-    csv_path = figure_name_with_code(__file__, OUTDIR/f"{args.out_prefix}_beta.csv")
-    final_csv = safe_to_csv(pd.DataFrame({
-        "intercept":[beta[0]],
-        "slope":[beta[1]],
-        "R2":[r2],
-        "t_slope":[t_slope],
-        "p_slope":[p_slope],
-        "n":[n]
-    }), csv_path, index=False)
-    print("WROTE:", fig_written)
-    print("WROTE:", final_csv)
 
-if __name__=="__main__":
-    make()
+    make_binned(
+        df=df,
+        out_png=FIGS / args.binned_out,
+        tidy_out=PROC / args.binned_csv,
+        bin_width=args.bin_width,
+        dpi=args.dpi,
+        bin_mode=args.bin_mode,
+        n_bins=args.n_bins,
+        n_boot=args.boots,
+        show_mean=args.show_mean,
+        title=args.title,
+        overwrite=args.overwrite,
+    )
+
+if __name__ == "__main__":
+    main()

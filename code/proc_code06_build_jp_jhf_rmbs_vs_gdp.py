@@ -147,7 +147,7 @@ def build():
         return 1
     merged['ratio_pct'] = 100.0 * merged['JHF_RMBS_bny'] / merged['NGDP_bny']
     quarterly_path = PROC/'proc_code06_JP_JHF_RMBS_vs_GDP_quarterly.csv'
-    safe_to_csv(merged.reset_index().rename(columns={'index':'DATE'}), quarterly_path, index=False)
+    safe_to_csv(merged.reset_index().rename(columns={'index':'DATE'}), quarterly_path, index=False, overwrite=True)
     # Annual summary
     ann_end = merged.resample('YE-DEC').last()[['JHF_RMBS_bny']]
     ann_gdp = merged['NGDP_bny'].resample('YE-DEC').sum().to_frame('NGDP_bny')
@@ -155,7 +155,7 @@ def build():
     annual = ann_end.join(ann_gdp).join(ann_avg_ratio)
     annual['ratio_pct_year_end'] = 100.0 * ann_end['JHF_RMBS_bny'] / ann_gdp['NGDP_bny']
     annual_path = PROC/'proc_code06_JP_JHF_RMBS_vs_GDP_annual_summary.csv'
-    safe_to_csv(annual.reset_index().rename(columns={'index':'DATE'}), annual_path, index=False)
+    safe_to_csv(annual.reset_index().rename(columns={'index':'DATE'}), annual_path, index=False, overwrite=True)
     print('[OK] wrote', quarterly_path)
     print('[OK] wrote', annual_path)
     return 0

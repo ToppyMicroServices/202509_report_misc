@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from util_code01_lib_io import find, read_fred_two_col, to_annual_from_quarterly_sum, to_annual_from_q4, safe_savefig, ensure_unique, figure_name_with_code
+from util_code01_lib_io import find, read_fred_two_col, to_annual_from_quarterly_sum, to_annual_from_q4, safe_savefig, figure_name_with_code
 
 OUTDIR = Path("figures")
 
@@ -267,10 +267,9 @@ def make():
     labels = [l.get_label() for l in lines]
     ax1.legend(lines, labels, loc="best")
     target = figure_name_with_code(__file__, OUTDIR/"JP_US_MBS_to_AnnualGDP_2012_2021_DUAL_AXIS.png")
-    #unique = ensure_unique(target)
     unique = target
-    safe_savefig(fig, unique)
-    print("WROTE:", unique)
+    saved_path = safe_savefig(fig, unique, overwrite=True)
+    print("WROTE:", saved_path)
 
 if __name__=="__main__":
     make()

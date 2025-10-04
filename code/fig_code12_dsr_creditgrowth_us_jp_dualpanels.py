@@ -32,7 +32,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import math
-from util_code01_lib_io import safe_savefig, ensure_unique, figure_name_with_code
+from util_code01_lib_io import safe_savefig, figure_name_with_code
 from util_code02_colors import COLOR_US, COLOR_JP
 
 PREF_US = Path('data_processed/proc_code03_US_DSR_CreditGrowth_panel.csv')
@@ -250,13 +250,13 @@ def make(
         fig.suptitle(title, fontsize=13, y=0.97)
     out.parent.mkdir(parents=True, exist_ok=True)
     out = figure_name_with_code(__file__, out)
-    final = ensure_unique(out)
-    safe_savefig(fig, final)
+    # Default: overwrite existing files to keep filenames stable
+    safe_savefig(fig, out, overwrite=True)
     if show:
         plt.show()
     else:
         plt.close(fig)
-    return final
+    return out
 
 def build_us_on_the_fly() -> pd.DataFrame | None:
     """If panel CSV is missing, attempt raw reconstruction similar to legacy fig_code06."""

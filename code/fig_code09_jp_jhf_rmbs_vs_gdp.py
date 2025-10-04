@@ -176,7 +176,7 @@ def fallback_build_from_components():
         jhf['JHF_RMBS'] = jhf['JHF_RMBS_raw']
     return jhf[['JHF_RMBS']]
 
-def plot_ratio(df: pd.DataFrame, out_png: str, show: bool=False) -> Path:
+def plot_ratio(df: pd.DataFrame, out_png: str, show: bool=False, overwrite: bool = True) -> Path:
     """Plot ratio_pct, save, optionally show; return saved Path.
 
     Styling tweaks:
@@ -203,7 +203,7 @@ def plot_ratio(df: pd.DataFrame, out_png: str, show: bool=False) -> Path:
     ax.grid(True, alpha=0.3)
     ax.legend()
     ax.yaxis.set_major_formatter(mtick.PercentFormatter(decimals=1))
-    saved = safe_savefig(fig, out_png)
+    saved = safe_savefig(fig, out_png, overwrite=overwrite)
     if show:
         try:
             plt.show()
@@ -219,7 +219,9 @@ def main(argv=None):
     ap.add_argument('--out-png', default='figures/JP_JHF_RMBS_to_GDP_ratio.png', help='Base output PNG (prefix added)')
     ap.add_argument('--annual-summary', action='store_true', help='Also write annual summary CSV (year-end stock & annual avg ratio)')
     ap.add_argument('--show', action='store_true', help='Display figure window after saving')
-    ap.add_argument('--overwrite', action='store_true', help='Overwrite (do not version) main CSV when possible')
+    ap.set_defaults(overwrite=True)
+    ap.add_argument('--overwrite', action='store_true', dest='overwrite', help='Overwrite outputs (default)')
+    ap.add_argument('--keep-versions', action='store_false', dest='overwrite', help='Append numeric suffix instead of overwriting')
     ap.add_argument('--prefer-proc-code06', action='store_true', help='Force using proc_code06 quarterly file if present (default already prefers it)')
     args = ap.parse_args(argv)
     # Auto fast-path: prefer proc_code06 quarterly when available
@@ -268,16 +270,17 @@ def main(argv=None):
     out_df = ratio.reset_index().rename(columns={'index':'DATE'})
     # Prefix CSV filename with this script code for provenance consistency
     csv_target = figure_name_with_code(__file__, Path(args.out_csv))
+    saved_csv = safe_to_csv(out_df, csv_target, index=False, overwrite=args.overwrite)
     if args.overwrite:
-        # direct write (overwrite) keeping deterministic name
-        csv_target.parent.mkdir(parents=True, exist_ok=True)
-        out_df.to_csv(csv_target, index=False)
-        print(f"[INFO] CSV written (overwrite): {csv_target}")
-        saved_csv = csv_target
+        print(f"[INFO] CSV written (overwrite): {saved_csv}")
     else:
-        saved_csv = safe_to_csv(out_df, csv_target, index=False)
-        print(f"[INFO] CSV saved (no-overwrite): {saved_csv}")
-    fig_path = plot_ratio(ratio, str(figure_name_with_code(__file__, Path(args.out_png))), show=args.show)
+        print(f"[INFO] CSV saved (versioned): {saved_csv}")
+    fig_path = plot_ratio(
+        ratio,
+        str(figure_name_with_code(__file__, Path(args.out_png))),
+        show=args.show,
+        overwrite=args.overwrite,
+    )
     print(f"[INFO] Figure saved: {fig_path}")
     if args.annual_summary:
         # Year-end & annual average ratio
@@ -286,7 +289,12 @@ def main(argv=None):
         annual = ann_end.join(ann_avg)
         annual['ratio_pct_year_end'] = ann_end['ratio_pct']
         annual_path = figure_name_with_code(__file__, Path('data_processed/JP_JHF_RMBS_to_GDP_ratio_annual_summary.csv'))
-        safe_to_csv(annual.reset_index().rename(columns={'index':'DATE'}), annual_path, index=False)
+        safe_to_csv(
+            annual.reset_index().rename(columns={'index':'DATE'}),
+            annual_path,
+            index=False,
+            overwrite=args.overwrite,
+        )
         print(f"[INFO] annual summary saved: {annual_path}")
     print('[OK] wrote outputs')
     return 0

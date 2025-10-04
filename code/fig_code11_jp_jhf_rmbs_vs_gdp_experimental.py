@@ -12,7 +12,7 @@ from util_code04_jhf_excel_loader import load_jhf_mbs_excel
 from util_code05_ratio_builders import load_local_jp_gdp, build_jp_ratio, plot_ratio
 import warnings
 warnings.filterwarnings('ignore', message="'Q' is deprecated", category=FutureWarning)
-from util_code01_lib_io import safe_to_csv, figure_name_with_code, ensure_unique
+from util_code01_lib_io import safe_to_csv, figure_name_with_code
 
 def main():
     ap = argparse.ArgumentParser()
@@ -48,14 +48,12 @@ def main():
             result.index.name = 'Date'
             from util_code01_lib_io import figure_name_with_code as _fn_code
             out_csv_path = _fn_code(__file__, Path(args.out_csv))
-            out_csv_path = ensure_unique(out_csv_path)
-            out_csv = safe_to_csv(result.reset_index(), out_csv_path, index=False)
+            out_csv = safe_to_csv(result.reset_index(), out_csv_path, index=False, overwrite=True)
             print('[OK] wrote', out_csv)
             if args.out_png:
                 from pathlib import Path
                 out_png_path = figure_name_with_code(__file__, Path(args.out_png))
-                out_png_path = ensure_unique(out_png_path)
-                plot_ratio(result, str(out_png_path))
+                plot_ratio(result, str(out_png_path), overwrite=True)
         else:
             print('[WARN] empty join result')
     else:
