@@ -91,13 +91,28 @@ def to_annual_from_q4(df, colname):
     a = df[colname].resample("YE-DEC").last()
     return a.to_frame(name=colname)
 
-def safe_savefig(fig, path):
-    """Save a Matplotlib figure safely (no overwrite) and return the saved Path."""
+def safe_savefig(fig, path, overwrite: bool = False, **savefig_kwargs):
+    """Save a Matplotlib figure.
+
+    By default, avoids overwriting by suffixing (uses ensure_unique). If overwrite=True,
+    saves to the exact path (clobbers any existing file).
+
+    Additional keyword arguments are forwarded to ``Figure.savefig``. Common options:
+      - dpi: int (default 150)
+      - transparent: bool
+      - format: str (e.g., 'png', 'pdf', 'svg')
+
+    Returns the actual saved Path.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # ensure unique to avoid overwrite
-    path = ensure_unique(path)
-    fig.savefig(path, bbox_inches="tight", dpi=150)
+    if not overwrite:
+        # ensure unique to avoid overwrite
+        path = ensure_unique(path)
+    # default dpi if not provided
+    if 'dpi' not in savefig_kwargs:
+        savefig_kwargs['dpi'] = 150
+    fig.savefig(path, bbox_inches="tight", **savefig_kwargs)
     plt.close(fig)
     return path
 
@@ -144,10 +159,13 @@ def ensure_unique(path: Path) -> Path:
             return cand
         i += 1
 
-def safe_to_csv(df: pd.DataFrame, path, index=False, **kwargs) -> Path:
-    """Write CSV safely with suffixing to avoid overwrite. Returns final Path."""
+def safe_to_csv(df: pd.DataFrame, path, index=False, overwrite: bool = False, **kwargs) -> Path:
+    """Write CSV; by default suffixes to avoid overwrite. Set overwrite=True to clobber.
+    Returns the final Path.
+    """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p = ensure_unique(p)
+    if not overwrite:
+        p = ensure_unique(p)
     df.to_csv(p, index=index, **kwargs)
     return p

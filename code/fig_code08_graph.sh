@@ -214,14 +214,14 @@ if [ ${#SUMMARY_ERR[@]:-0} -gt 0 ] 2>/dev/null; then
   printf "ERRORS:\n"; for s in "${SUMMARY_ERR[@]}"; do echo "  - $s"; done
   exit 1
 fi
-echo "\n[CHECK] Verifying fig_code prefix on generated PNG/CSV outputs..."
+echo "\n[CHECK] Verifying fig_code prefix on generated PNG/CSV outputs (including subfolders)..."
 prefix_issues=0
 while IFS= read -r f; do
   base="$(basename "$f")"
   # Allow a legacy diagnostic file (kept temporarily) without prefix to avoid noisy warning
   if [[ "$base" == JP_US_phi_offbalance_quarterly_* ]]; then continue; fi
-  [[ "$base" =~ ^fig_code[0-9]+_ ]] || { echo "  [WARN] missing prefix: $base"; prefix_issues=$((prefix_issues+1)); }
-done < <(find "$FIG_DIR" -maxdepth 1 -type f \( -name '*.png' -o -name '*.csv' \) -mtime -1)
+  [[ "$base" =~ ^fig_code[0-9]+_ ]] || { echo "  [WARN] missing prefix: $base (path: ${f#$FIG_DIR/})"; prefix_issues=$((prefix_issues+1)); }
+done < <(find "$FIG_DIR" -type f \( -name '*.png' -o -name '*.csv' \) -mtime -1)
 if (( prefix_issues > 0 )); then
   echo "[CHECK] Prefix issues detected: $prefix_issues (see warnings above)"; else echo "[CHECK] All recent files have expected prefix."; fi
 
